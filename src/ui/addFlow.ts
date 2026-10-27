@@ -2,7 +2,7 @@
 // Built on the design system's Form, Input and Button: a window over the blurred shelf, one column,
 // the result of a pasted link shown right under the field (MVP doc §4).
 import { addBottle, findBottle, putBlob, setSong } from '../data/db';
-import { monthLabel, thisMonth, type PhotoSource, type ShelfEntry } from '../data/model';
+import { today, type PhotoSource, type ShelfEntry } from '../data/model';
 import { tearAll } from '../ds/tear';
 import { isAudio, readTags, tagsFromName } from '../audio/tags';
 import { cutout, paletteOf, prepareImage } from '../images/process';
@@ -62,12 +62,10 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
     title: '',
     artwork: undefined as Blob | undefined,
     links: {} as Record<string, string>,
-    month: thisMonth(),
     /** An audio file from the device: plays in the app (MVP doc §5, own file first). */
     file: undefined as File | undefined,
   };
   const cover = { own: undefined as Blob | undefined, useOwn: false };
-  const minMonth = mode.kind === 'song' ? mode.entry.current?.pairing.from.slice(0, 7) : undefined;
   // parts of the current step that are redrawn on their own
   let photoArea: HTMLElement;
   let photoHint: HTMLElement | undefined;
@@ -135,16 +133,6 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
     stay.focus();
   }
 
-  function stepsLine() {
-    const names: Record<Step, string> = { bottle: 'флакон', track: 'песня', cover: 'обложка' };
-    const line = h('div', { class: 's-form__steps' });
-    steps.forEach((s, i) => {
-      if (i) line.append(h('span', { 'aria-hidden': 'true' }, '→'));
-      line.append(h('span', { class: s === step ? 'is-current' : '', 'aria-current': s === step ? 'step' : null }, `${i + 1} · ${names[s]}`));
-    });
-    return line;
-  }
-
   function actions(left: HTMLElement[], primary: { text: string; run: () => void }) {
     const p = h('button', { type: 'button', class: 's-btn s-btn--primary', onclick: () => !busy && primary.run() }, primary.text);
     return h('div', { class: 's-form__actions' }, h('div', { class: 'row' }, ...left), p);
@@ -152,7 +140,7 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
 
   function render() {
     body.replaceChildren();
-    const form = h('div', { class: 's-form' }, stepsLine());
+    const form = h('div', { class: 's-form' });
     body.append(form);
     if (step === 'bottle') renderBottle(form);
     else if (step === 'track') renderTrack(form);
@@ -296,57 +284,45 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
         timer = setTimeout(() => parse(), 350);
       },
     });
-    link.hint('из «Моей волны»: «Поделиться» → «Скопировать ссылку»');
     const artist = field({ label: 'Исполнитель', value: track.artist, onInput: (v) => ((track.artist = v), (auto.artist = false), (dirty = true)) });
     const name = field({ label: 'Песня', value: track.title, onInput: (v) => ((track.title = v), (auto.title = false), (dirty = true)) });
-    const month = field({
-      label: hasSong ? 'Новая песня с' : 'Слушаю с',
-      value: track.month,
-      type: 'month',
-      onInput: (v) => ((track.month = v), (dirty = true)),
-    });
-    month.input.max = thisMonth();
-    if (minMonth) month.input.min = minMonth;
-    if (minMonth) month.hint(`текущая песня — с ${monthLabel(minMonth + '-01')}`);
-
-    // Upload from the device: a second way in, next to the link.
+    // A file from the device comes first: it works for every song, a link only where the service answers.
     const fileInput = h('input', { type: 'file', accept: 'audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac', hidden: true });
-    const fileRow = h('div', { class: 'file-row' });
-    const fileHint = h('div', { class: 's-field__hint' });
+    const drop = h('div', { class: 's-drop audio-drop' });
+    // shown only when the dropped file is not audio
+    const fileHint = h('div', { class: 's-field__hint is-error', hidden: true });
     fileInput.addEventListener('change', () => {
       const f = fileInput.files?.[0];
       fileInput.value = '';
       if (f) void setFile(f);
     });
     const drawFile = () => {
-      fileRow.replaceChildren();
+      drop.replaceChildren();
       if (track.file) {
-        fileRow.append(
-          h('span', { class: 'file-name' }, track.file.name),
-          h('span', { class: 'meta muted' }, megabytes(track.file.size)),
+        drop.append(
+          h('span', { class: 'file-row' }, h('span', { class: 'file-name' }, track.file.name), h('span', { class: 'meta muted' }, megabytes(track.file.size))),
           button('убрать', () => {
             track.file = undefined;
             drawFile();
           }, 's-btn--label s-btn--bracket'),
         );
       } else {
-        fileRow.append(button('загрузить с устройства', () => fileInput.click(), 's-btn--label s-btn--bracket'));
+        drop.append(h('span', {}, 'Перетащи аудиофайл'), button('выбрать файл', () => fileInput.click(), 's-btn--label s-btn--bracket'));
       }
     };
     drawFile();
-    const upload = h('div', { class: 's-field' }, fileRow, fileInput, fileHint);
-    dropAudio(upload, (f) => void setFile(f));
+    const upload = h('div', { class: 's-field' }, h('span', { class: 's-field__label' }, 'Файл с песней'), drop, fileInput, fileHint);
+    dropAudio(drop, (f) => void setFile(f));
 
     async function setFile(f: File) {
       if (!isAudio(f)) {
         fileHint.textContent = 'это не аудиофайл — подойдут mp3, m4a, ogg, wav, flac';
-        fileHint.className = 's-field__hint is-error';
+        fileHint.hidden = false;
         return;
       }
       track.file = f;
       dirty = true;
-      fileHint.className = 's-field__hint';
-      fileHint.textContent = 'читаю теги…';
+      fileHint.hidden = true;
       drawFile();
       const tags = await readTags(f);
       const byName = tagsFromName(f.name);
@@ -360,14 +336,9 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
       fill('artist', artist, tags.artist ?? byName.artist);
       fill('title', name, tags.title ?? byName.title);
       if (tags.picture && !track.artwork) track.artwork = tags.picture;
-      const found = [tags.title && 'название', tags.artist && 'исполнитель', tags.picture && 'обложка'].filter(Boolean) as string[];
-      fileHint.textContent = found.length
-        ? `в файле нашлись ${list(found)}; песня будет играть прямо здесь`
-        : 'песня будет играть прямо здесь; название взято из имени файла';
-      fileHint.className = `s-field__hint${found.length ? ' is-found' : ''}`;
     }
 
-    form.append(link.root, upload, h('div', { class: 's-form__row' }, artist.root, name.root), month.root);
+    form.append(upload, link.root, h('div', { class: 's-form__row' }, artist.root, name.root));
 
     const left =
       mode.kind === 'new'
@@ -375,7 +346,7 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
         : [button('Отмена', requestClose)];
     form.append(
       actions(left, {
-        text: 'Дальше: обложка',
+        text: 'Добавить обложку',
         run: () => {
           if (!track.link && !track.file) {
             link.hint('нужна ссылка или файл: иначе песню не послушать', 'error');
@@ -385,14 +356,6 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
             name.hint('впиши название песни', 'error');
             return name.input.focus();
           }
-          if (!/^\d{4}-\d{2}$/.test(track.month) || track.month > thisMonth()) {
-            month.hint('выбери месяц, не позже текущего', 'error');
-            return month.input.focus();
-          }
-          if (minMonth && track.month < minMonth) {
-            month.hint(`новая песня не может начаться раньше текущей (с ${monthLabel(minMonth + '-01')})`, 'error');
-            return month.input.focus();
-          }
           go('cover');
         },
       }),
@@ -401,7 +364,7 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
     async function parse() {
       const url = track.link;
       const my = ++token;
-      if (!url) return link.hint('из «Моей волны»: «Поделиться» → «Скопировать ссылку»');
+      if (!url) return link.hint('');
       if (!looksLikeUrl(url)) return link.hint('это не похоже на ссылку — она начинается с https://', 'error');
       link.hint('ищу…');
       const t = await fetchTrack(url);
@@ -456,22 +419,19 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
     );
   }
 
+  // On: the track's artwork is the cover. Off (or no artwork at all): the area is a dropzone
+  // for the person's own picture.
   function drawCover() {
     coverArea.replaceChildren();
-    const options = h('div', { class: 'row', role: 'radiogroup', 'aria-label': 'Обложка' });
-    const opt = (text: string, own: boolean) => {
-      const b = button(text, () => {
-        cover.useOwn = own;
-        drawCover();
-      }, own === cover.useOwn ? 'is-current' : '');
-      b.setAttribute('role', 'radio');
-      b.setAttribute('aria-checked', String(own === cover.useOwn));
-      return b;
-    };
-    if (track.artwork) options.append(opt('Обложка трека', false), opt('Своя картинка', true));
+    const toggle = track.artwork
+      ? switchControl('использовать обложку трека', !cover.useOwn, (on) => {
+          cover.useOwn = !on;
+          drawCover();
+        })
+      : null;
 
     const shown = cover.useOwn ? cover.own : track.artwork;
-    const area = h('div', { class: 's-drop cover-drop' });
+    const area = h('div', { class: `s-drop cover-drop${cover.useOwn ? '' : ' is-static'}` });
     if (shown) {
       const url = URL.createObjectURL(shown);
       const img = h('img', { class: 'cover-preview', alt: 'Обложка', src: url });
@@ -479,17 +439,11 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
       area.append(img);
     }
     if (cover.useOwn) {
-      area.append(h('span', {}, shown ? '' : 'Картинка, которая для тебя звучит как эта пара'), filePicker((f) => setOwnCover(f)));
+      if (!shown) area.append(h('span', {}, 'Перетащи картинку'));
+      area.append(filePicker((f) => setOwnCover(f)));
       dropTarget(area, (b) => setOwnCover(b));
     }
-    const hint = h(
-      'div',
-      { class: 's-field__hint' },
-      !shown ? 'без картинки на конверте будет название песни' : cover.useOwn ? 'можно перетащить или вставить из буфера' : '',
-    );
-    coverArea.append(
-      h('div', { class: 's-field' }, h('span', { class: 's-field__label' }, 'Обложка · по желанию'), options, area, hint),
-    );
+    coverArea.append(h('div', { class: 's-field' }, toggle, area));
   }
 
   function setOwnCover(blob: Blob) {
@@ -546,7 +500,8 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
             platformLinks: track.links,
             localFile,
           },
-          `${track.month}-01`,
+          // a song starts the day it is put on: no back-dating
+          today(),
           own,
         );
       }
@@ -561,6 +516,18 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
       }
     }
   }
+}
+
+/** An on/off switch: a 1px pill with a knob, orchid when on (the design system has no switch yet). */
+function switchControl(label: string, on: boolean, onChange: (on: boolean) => void) {
+  const b = h(
+    'button',
+    { type: 'button', role: 'switch', class: 's-switch', 'aria-checked': String(on) },
+    h('span', { class: 's-switch__track', 'aria-hidden': 'true' }, h('span', { class: 's-switch__knob' })),
+    h('span', {}, label),
+  );
+  b.addEventListener('click', () => onChange(b.getAttribute('aria-checked') !== 'true'));
+  return b;
 }
 
 function filePicker(onFile: (f: File) => void) {

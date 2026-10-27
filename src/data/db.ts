@@ -1,7 +1,7 @@
 // Everything lives in the browser (IndexedDB) for the MVP. The functions below are the only way
 // the app touches storage, so a server-backed version can replace this file without the UI noticing.
 import { openDB, type DBSchema } from 'idb';
-import { lastChange, newId, type Bottle, type Pairing, type ShelfEntry, type Track } from './model';
+import { lastChange, newId, today, type Bottle, type Pairing, type ShelfEntry, type Track } from './model';
 
 interface Schema extends DBSchema {
   bottles: { key: string; value: Bottle };
@@ -54,14 +54,14 @@ export async function findBottle(brand: string, name: string): Promise<Bottle | 
 }
 
 export async function addBottle(bottle: Omit<Bottle, 'id' | 'addedAt'>): Promise<Bottle> {
-  const b: Bottle = { ...bottle, id: newId(), addedAt: new Date().toISOString().slice(0, 10) };
+  const b: Bottle = { ...bottle, id: newId(), addedAt: today() };
   await (await db).put('bottles', b);
   return b;
 }
 
 /**
- * Gives the bottle a new song from `from` (ISO date). The current pairing, if any, ends on that
- * date, so the history stays gapless; a song can be replaced but never removed.
+ * Gives the bottle a new song from `from` (ISO date, the day it is put on). The current pairing,
+ * if any, ends on that date, so the history stays gapless; a song can be replaced but never removed.
  */
 export async function setSong(
   bottleId: string,

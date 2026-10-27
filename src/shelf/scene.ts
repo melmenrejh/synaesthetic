@@ -21,7 +21,7 @@ interface Item extends ShelfItem {
   group: THREE.Group;
   front: THREE.MeshStandardMaterial;
   back: THREE.MeshStandardMaterial;
-  sticker: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshPhysicalMaterial>;
+  sticker: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshPhysicalMaterial> | null;
   vinyl: THREE.Mesh | null;
   vinylMat: THREE.MeshPhysicalMaterial | null;
   home: { pos: THREE.Vector3; quat: THREE.Quaternion };
@@ -186,22 +186,26 @@ export class Shelf {
     sleeve.castShadow = true;
     g.add(sleeve);
 
+    // no photo of the bottle: the cover stays clean
     const st = stickerCanvas(e, d.images, LOW);
-    const sticker = new THREE.Mesh(
-      new THREE.PlaneGeometry(st.w, st.h),
-      new THREE.MeshPhysicalMaterial({
-        map: tex(st.canvas),
-        transparent: true,
-        alphaTest: 0.4,
-        roughness: 0.28,
-        clearcoat: 1,
-        clearcoatRoughness: 0.15,
-      }),
-    );
-    const r = rng(e.bottle.id + 's');
-    sticker.position.set(0.38, -0.3, 0.026);
-    sticker.rotation.z = (r() - 0.5) * 0.28;
-    g.add(sticker);
+    let sticker: Item['sticker'] = null;
+    if (st) {
+      sticker = new THREE.Mesh(
+        new THREE.PlaneGeometry(st.w, st.h),
+        new THREE.MeshPhysicalMaterial({
+          map: tex(st.canvas),
+          transparent: true,
+          alphaTest: 0.4,
+          roughness: 0.28,
+          clearcoat: 1,
+          clearcoatRoughness: 0.15,
+        }),
+      );
+      const r = rng(e.bottle.id + 's');
+      sticker.position.set(0.38, -0.3, 0.026);
+      sticker.rotation.z = (r() - 0.5) * 0.28;
+      g.add(sticker);
+    }
 
     let vinyl: THREE.Mesh | null = null;
     let vinylMat: THREE.MeshPhysicalMaterial | null = null;
@@ -241,7 +245,8 @@ export class Shelf {
     };
     swap(it.front, frontCanvas(it.entry, it.images, size));
     swap(it.back, backCanvas(it.entry, size));
-    swap(it.sticker.material, stickerCanvas(it.entry, it.images, size).canvas);
+    const st = it.sticker && stickerCanvas(it.entry, it.images, size);
+    if (it.sticker && st) swap(it.sticker.material, st.canvas);
     if (it.vinylMat) swap(it.vinylMat, vinylCanvas(it.entry, size));
   }
 

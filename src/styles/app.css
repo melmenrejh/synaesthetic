@@ -278,15 +278,73 @@ h2 {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.s-field.is-over .file-row {
-  outline: 1px dashed var(--ink);
-  outline-offset: var(--space-1);
+.audio-drop .file-row {
+  max-width: 100%;
+  justify-content: center;
 }
 .cover-pick .s-field {
   gap: var(--space-3);
 }
 .cover-drop {
   min-height: 240px;
+  align-content: center;
+}
+/* the track artwork is shown, not dropped: no dashed frame */
+.cover-drop.is-static {
+  border-style: solid;
+  border-color: transparent;
+}
+
+/* ---------- switch ---------- */
+.s-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-self: start;
+  min-height: var(--btn-word-min-h);
+  padding: 0;
+  background: none;
+  border: 0;
+  font: 400 14px/20px var(--font-mono);
+  letter-spacing: -0.01em;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: color var(--duration-quick) var(--ease-develop);
+}
+.s-switch:hover,
+.s-switch[aria-checked='true'] {
+  color: var(--ink);
+}
+.s-switch:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.s-switch__track {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid var(--ink-faint);
+  border-radius: var(--radius-round);
+  transition: border-color var(--duration-quick) var(--ease-develop);
+}
+.s-switch__knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-round);
+  background: var(--ink-faint);
+  transition: transform var(--duration-soft) var(--ease-settle), background-color var(--duration-quick) var(--ease-develop);
+}
+.s-switch[aria-checked='true'] .s-switch__track {
+  border-color: var(--orchid);
+}
+.s-switch[aria-checked='true'] .s-switch__knob {
+  background: var(--orchid);
+  transform: translateX(16px);
 }
 .cover-preview {
   width: 200px;

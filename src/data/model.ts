@@ -25,7 +25,7 @@ export interface Pairing {
   trackId: string;
   /** Blob id of the person's own cover; without it the track artwork is the cover. */
   coverImage?: string;
-  /** ISO date, first day of a month: dates are entered to the month. */
+  /** ISO date: the day the song was put on (no back-dating). */
   from: string;
   /** Absent for the current pairing. */
   to?: string;
@@ -53,8 +53,8 @@ export interface ShelfEntry {
 
 export const newId = () => crypto.randomUUID();
 
-/** 'YYYY-MM' of today. */
-export const thisMonth = () => new Date().toISOString().slice(0, 7);
+/** 'YYYY-MM-DD' of today, local time. */
+export const today = () => new Date().toLocaleDateString('sv-SE');
 
 /** '2024-03-01' → '03.2024' */
 export const monthLabel = (iso: string) => `${iso.slice(5, 7)}.${iso.slice(0, 4)}`;

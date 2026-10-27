@@ -165,30 +165,28 @@ export function backCanvas(e: ShelfEntry, S: number) {
   x.fillText(e.bottle.name, 76 * u, 196 * u, 868 * u);
   x.fillStyle = 'rgba(31,30,33,.25)';
   x.fillRect(80 * u, 244 * u, 864 * u, Math.max(1, 2 * u));
-  label('История треков', 22, 304);
 
   if (!e.history.length) {
     x.fillStyle = PRINT_MUTED;
     x.font = `${34 * u}px ${MONO}`;
     ['Песни пока нет.', 'Когда найдёшь её, в конверте', 'появится пластинка.'].forEach((l, i) =>
-      x.fillText(l, 80 * u, (392 + i * 52) * u),
+      x.fillText(l, 80 * u, (330 + i * 52) * u),
     );
   } else {
     // newest on top; a long history keeps its latest rows
-    const rows = [...e.history].reverse().slice(0, 5);
+    const rows = [...e.history].reverse().slice(0, 6);
+    // each row: the song in Prata, its period underneath (the current one in orchid)
     rows.forEach(({ pairing, track }, i) => {
-      const y = 392 + i * 112;
-      const current = !pairing.to;
-      x.fillStyle = current ? ORCHID : PRINT_MUTED;
-      x.font = `400 ${22 * u}px ${MONO}`;
-      x.fillText(`${current ? '● ' : ''}${periodLabel(pairing)}`, 80 * u, y * u);
+      const y = 324 + i * 112;
       x.fillStyle = PRINT_INK;
-      x.font = `400 ${34 * u}px ${MONO}`;
+      x.font = `${38 * u}px ${SERIF}`;
       const line = track.artist ? `${track.artist} — ${track.title}` : track.title;
-      x.fillText(line, 80 * u, (y + 48) * u, 864 * u);
+      x.fillText(line, 78 * u, y * u, 864 * u);
+      x.fillStyle = pairing.to ? PRINT_MUTED : ORCHID;
+      x.font = `400 ${22 * u}px ${MONO}`;
+      x.fillText(periodLabel(pairing), 80 * u, (y + 40) * u);
     });
   }
-  label('synaesthetic · личная полка', 18, 952, 'rgba(31,30,33,.45)');
   return c;
 }
 
@@ -202,9 +200,9 @@ export interface Sticker {
 
 /**
  * The bottle on the cover: a die-cut sticker with a white border when the background could be
- * removed, a polaroid when it could not, a small paper label when there is no photo at all.
+ * removed, a polaroid when it could not, and nothing at all when there is no photo.
  */
-export function stickerCanvas(e: ShelfEntry, img: SleeveImages, S: number): Sticker {
+export function stickerCanvas(e: ShelfEntry, img: SleeveImages, S: number): Sticker | null {
   const u = S / 1024;
   if (img.cutout) {
     const k = (720 * u) / Math.max(img.cutout.width, img.cutout.height);
@@ -244,19 +242,7 @@ export function stickerCanvas(e: ShelfEntry, img: SleeveImages, S: number): Stic
     x.fillText(e.bottle.name, 300 * u, 652 * u, 540 * u);
     return { canvas: c, w: 0.92, h: 1.1, polaroid: true };
   }
-  const c = canvas(Math.round(560 * u), Math.round(300 * u));
-  const x = c.getContext('2d')!;
-  x.fillStyle = SLIP;
-  x.fillRect(0, 0, c.width, c.height);
-  x.fillStyle = PRINT_MUTED;
-  x.font = `500 ${22 * u}px ${MONO}`;
-  x.letterSpacing = `${0.08 * 22 * u}px`;
-  x.fillText((e.bottle.brand || '').toUpperCase(), 40 * u, 96 * u, 480 * u);
-  x.letterSpacing = '0px';
-  x.fillStyle = PRINT_INK;
-  x.font = `400 ${38 * u}px ${MONO}`;
-  wrap(x, e.bottle.name, 480 * u, 2).forEach((l, i) => x.fillText(l, 40 * u, (164 + i * 50) * u));
-  return { canvas: c, w: 0.95, h: 0.51, polaroid: true };
+  return null;
 }
 
 export function vinylCanvas(e: ShelfEntry, S: number) {
