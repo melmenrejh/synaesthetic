@@ -84,6 +84,50 @@ function hideHeld() {
   document.body.classList.remove('is-held');
   $('caption').hidden = true;
   $('actions').hidden = true;
+  void syncAudio();
+}
+
+// ---------- the record plays the song's own file ----------
+// Order from the MVP doc §5: own file → platform player → «open in the app». The file plays while
+// the record is out of its sleeve and fades away when it goes back.
+const audio = new Audio();
+audio.loop = true;
+let audioFor = '';
+let fade = 0;
+
+// A timer, not requestAnimationFrame: frames stop in a background tab, and the sound must not.
+function fadeTo(target: number, done?: () => void) {
+  clearInterval(fade);
+  const from = audio.volume, start = performance.now(), ms = 600;
+  fade = window.setInterval(() => {
+    const t = Math.min(1, (performance.now() - start) / ms);
+    audio.volume = from + (target - from) * t;
+    if (t < 1) return;
+    clearInterval(fade);
+    done?.();
+  }, 30);
+}
+
+async function syncAudio() {
+  const file = shelf?.pickedEntry?.current?.track.localFile;
+  if (!shelf?.recordOut || !file) {
+    if (!audio.paused) fadeTo(0, () => audio.pause());
+    return;
+  }
+  if (audioFor !== file) {
+    const blob = await getBlob(file);
+    if (!blob) return;
+    if (audio.src) URL.revokeObjectURL(audio.src);
+    audio.src = URL.createObjectURL(blob);
+    audioFor = file;
+    audio.volume = 0;
+  }
+  try {
+    await audio.play();
+    fadeTo(1);
+  } catch {
+    // the browser refused to start sound; the record still turns
+  }
 }
 
 const present = (...nodes: (Node | null)[]) => nodes.filter((n): n is Node => n !== null);
@@ -106,15 +150,16 @@ function syncActions() {
       e.current
         ? word(out ? 'Убрать пластинку' : 'Достать пластинку', () => shelf!.toggleRecord(), out ? 'is-current' : '')
         : word('Добавить песню', () => changeSong(e)),
-      out && e.current ? listenLink(e) : null,
+      out && e.current?.track.sourceUrl ? listenLink(e) : null,
       e.current ? word('Сменить песню', () => changeSong(e)) : null,
       word('На полку', () => shelf!.putBack()),
     ),
   );
   bar.hidden = false;
+  void syncAudio();
 }
 
-// For now the record opens the song where it lives; the in-app player comes with the next step.
+// A song with a link can also be opened where it lives.
 function listenLink(e: ShelfEntry) {
   const a = h('a', { class: 's-btn', href: e.current!.track.sourceUrl, target: '_blank', rel: 'noopener' }, 'Слушать');
   a.append(icon('external'));

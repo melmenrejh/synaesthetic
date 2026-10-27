@@ -4,6 +4,7 @@
 import { addBottle, findBottle, putBlob, setSong } from '../data/db';
 import { monthLabel, thisMonth, type PhotoSource, type ShelfEntry } from '../data/model';
 import { tearAll } from '../ds/tear';
+import { isAudio, readTags, tagsFromName } from '../audio/tags';
 import { cutout, paletteOf, prepareImage } from '../images/process';
 import { fetchImage, fetchOg, fetchTrack, guessFromUrl, looksLikeUrl, splitBottleTitle, splitTrackTitle } from '../links/api';
 import { h, icon } from './dom';
@@ -55,7 +56,16 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
 
   const bottle = { link: '', brand: '', name: '', photo: undefined as Blob | undefined, photoSource: 'upload' as PhotoSource };
   const auto = { brand: false, name: false, title: false, artist: false };
-  const track = { link: '', artist: '', title: '', artwork: undefined as Blob | undefined, links: {} as Record<string, string>, month: thisMonth() };
+  const track = {
+    link: '',
+    artist: '',
+    title: '',
+    artwork: undefined as Blob | undefined,
+    links: {} as Record<string, string>,
+    month: thisMonth(),
+    /** An audio file from the device: plays in the app (MVP doc §5, own file first). */
+    file: undefined as File | undefined,
+  };
   const cover = { own: undefined as Blob | undefined, useOwn: false };
   const minMonth = mode.kind === 'song' ? mode.entry.current?.pairing.from.slice(0, 7) : undefined;
   // parts of the current step that are redrawn on their own
@@ -63,7 +73,8 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
   let photoHint: HTMLElement | undefined;
   let coverArea: HTMLElement;
 
-  const title = mode.kind === 'new' ? 'Новый флакон' : 'Сменить песню';
+  const hasSong = mode.kind === 'song' && !!mode.entry.current;
+  const title = mode.kind === 'new' ? 'Новый флакон' : hasSong ? 'Сменить песню' : 'Добавить песню';
   const body = h('div', { class: 's-window__body' });
   const win = h(
     'div',
@@ -289,7 +300,7 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
     const artist = field({ label: 'Исполнитель', value: track.artist, onInput: (v) => ((track.artist = v), (auto.artist = false), (dirty = true)) });
     const name = field({ label: 'Песня', value: track.title, onInput: (v) => ((track.title = v), (auto.title = false), (dirty = true)) });
     const month = field({
-      label: mode.kind === 'new' ? 'Слушаю с' : 'Новая песня с',
+      label: hasSong ? 'Новая песня с' : 'Слушаю с',
       value: track.month,
       type: 'month',
       onInput: (v) => ((track.month = v), (dirty = true)),
@@ -298,7 +309,65 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
     if (minMonth) month.input.min = minMonth;
     if (minMonth) month.hint(`текущая песня — с ${monthLabel(minMonth + '-01')}`);
 
-    form.append(link.root, h('div', { class: 's-form__row' }, artist.root, name.root), month.root);
+    // Upload from the device: a second way in, next to the link.
+    const fileInput = h('input', { type: 'file', accept: 'audio/*,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac', hidden: true });
+    const fileRow = h('div', { class: 'file-row' });
+    const fileHint = h('div', { class: 's-field__hint' });
+    fileInput.addEventListener('change', () => {
+      const f = fileInput.files?.[0];
+      fileInput.value = '';
+      if (f) void setFile(f);
+    });
+    const drawFile = () => {
+      fileRow.replaceChildren();
+      if (track.file) {
+        fileRow.append(
+          h('span', { class: 'file-name' }, track.file.name),
+          h('span', { class: 'meta muted' }, megabytes(track.file.size)),
+          button('убрать', () => {
+            track.file = undefined;
+            drawFile();
+          }, 's-btn--label s-btn--bracket'),
+        );
+      } else {
+        fileRow.append(button('загрузить с устройства', () => fileInput.click(), 's-btn--label s-btn--bracket'));
+      }
+    };
+    drawFile();
+    const upload = h('div', { class: 's-field' }, fileRow, fileInput, fileHint);
+    dropAudio(upload, (f) => void setFile(f));
+
+    async function setFile(f: File) {
+      if (!isAudio(f)) {
+        fileHint.textContent = 'это не аудиофайл — подойдут mp3, m4a, ogg, wav, flac';
+        fileHint.className = 's-field__hint is-error';
+        return;
+      }
+      track.file = f;
+      dirty = true;
+      fileHint.className = 's-field__hint';
+      fileHint.textContent = 'читаю теги…';
+      drawFile();
+      const tags = await readTags(f);
+      const byName = tagsFromName(f.name);
+      const fill = (key: 'artist' | 'title', fl: Field, v?: string) => {
+        if (!v || (track[key] && !auto[key])) return;
+        track[key] = v;
+        auto[key] = true;
+        fl.input.value = v;
+        fl.missing(false);
+      };
+      fill('artist', artist, tags.artist ?? byName.artist);
+      fill('title', name, tags.title ?? byName.title);
+      if (tags.picture && !track.artwork) track.artwork = tags.picture;
+      const found = [tags.title && 'название', tags.artist && 'исполнитель', tags.picture && 'обложка'].filter(Boolean) as string[];
+      fileHint.textContent = found.length
+        ? `в файле нашлись ${list(found)}; песня будет играть прямо здесь`
+        : 'песня будет играть прямо здесь; название взято из имени файла';
+      fileHint.className = `s-field__hint${found.length ? ' is-found' : ''}`;
+    }
+
+    form.append(link.root, upload, h('div', { class: 's-form__row' }, artist.root, name.root), month.root);
 
     const left =
       mode.kind === 'new'
@@ -308,8 +377,8 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
       actions(left, {
         text: 'Дальше: обложка',
         run: () => {
-          if (!track.link) {
-            link.hint('нужна ссылка: без неё песню не послушать', 'error');
+          if (!track.link && !track.file) {
+            link.hint('нужна ссылка или файл: иначе песню не послушать', 'error');
             return link.input.focus();
           }
           if (!track.title.trim()) {
@@ -466,9 +535,17 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
       if (withSong) {
         const artwork = track.artwork ? await putBlob(await prepareImage(track.artwork, 1024)) : undefined;
         const own = cover.useOwn && cover.own ? await putBlob(await prepareImage(cover.own)) : undefined;
+        const localFile = track.file ? await putBlob(track.file) : undefined;
         await setSong(
           bottleId,
-          { title: track.title.trim(), artist: track.artist.trim(), artwork, sourceUrl: track.link, platformLinks: track.links },
+          {
+            title: track.title.trim(),
+            artist: track.artist.trim(),
+            artwork,
+            sourceUrl: track.link,
+            platformLinks: track.links,
+            localFile,
+          },
           `${track.month}-01`,
           own,
         );
@@ -512,5 +589,23 @@ function dropTarget(el: HTMLElement, onImage: (b: Blob, source: PhotoSource) => 
     }
   });
 }
+
+/** An audio file dropped onto the upload row. */
+function dropAudio(el: HTMLElement, onFile: (f: File) => void) {
+  el.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    el.classList.add('is-over');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('is-over'));
+  el.addEventListener('drop', (e) => {
+    e.preventDefault();
+    el.classList.remove('is-over');
+    const f = e.dataTransfer?.files?.[0];
+    if (f) onFile(f);
+  });
+}
+
+const megabytes = (bytes: number) =>
+  bytes < 1048576 ? `${Math.max(1, Math.round(bytes / 1024))} КБ` : `${(bytes / 1048576).toFixed(1).replace('.', ',')} МБ`;
 
 const list = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} и ${xs[xs.length - 1]}` : xs[0]);

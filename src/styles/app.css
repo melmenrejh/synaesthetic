@@ -265,6 +265,23 @@ h2 {
   max-width: 100%;
   object-fit: contain;
 }
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--btn-label-min-h);
+  min-width: 0;
+}
+.file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.s-field.is-over .file-row {
+  outline: 1px dashed var(--ink);
+  outline-offset: var(--space-1);
+}
 .cover-pick .s-field {
   gap: var(--space-3);
 }
