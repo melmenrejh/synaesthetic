@@ -1,0 +1,301 @@
+/* synaesthetic — the app around the shelf. Values come from tokens.css. */
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 14px/20px var(--font-mono);
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button {
+  font: inherit;
+}
+.muted {
+  color: var(--ink-muted);
+}
+.name,
+.title,
+.ui,
+.meta,
+p,
+h1,
+h2 {
+  margin: 0;
+}
+.uppercase {
+  text-transform: uppercase;
+}
+.icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+}
+.icon svg {
+  width: 16px;
+  height: 16px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+[hidden] {
+  display: none !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.sr-only:focus-within {
+  position: fixed;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  width: auto;
+  height: auto;
+  clip: auto;
+  z-index: 5;
+}
+
+/* ---------- stage ---------- */
+#stage {
+  position: fixed;
+  inset: 0;
+}
+#stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.fail {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--ink-muted);
+}
+
+/* ---------- top bar ---------- */
+.topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: max(var(--space-4), env(safe-area-inset-top)) max(var(--space-10), env(safe-area-inset-right))
+    var(--space-4) max(var(--space-10), env(safe-area-inset-left));
+  pointer-events: none;
+  transition: opacity var(--duration-soft) var(--ease-develop), filter var(--duration-soft) var(--ease-develop);
+}
+.topbar > * {
+  pointer-events: auto;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.brand img {
+  display: block;
+  height: 30px;
+  width: auto;
+}
+.is-held .topbar {
+  opacity: 0;
+  filter: blur(var(--blur-hover));
+  pointer-events: none;
+}
+.is-held .topbar > * {
+  pointer-events: none;
+}
+@media (max-width: 560px) {
+  .topbar {
+    padding-left: max(var(--space-4), env(safe-area-inset-left));
+    padding-right: max(var(--space-4), env(safe-area-inset-right));
+  }
+}
+/* on a phone the mark alone signs the page; the word would crowd the action */
+@media (max-width: 420px) {
+  .brand .name {
+    display: none;
+  }
+}
+
+/* ---------- empty shelf ---------- */
+.empty {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  text-align: center;
+  pointer-events: none;
+}
+.empty > * {
+  pointer-events: auto;
+}
+.empty .title {
+  max-width: 14em;
+  text-wrap: balance;
+}
+.empty .s-btn--primary {
+  margin-top: var(--space-6);
+}
+
+/* ---------- sleeve in hand ---------- */
+.caption {
+  position: fixed;
+  top: max(var(--space-10), env(safe-area-inset-top));
+  left: max(var(--space-10), env(safe-area-inset-left));
+  right: var(--space-10);
+  display: grid;
+  gap: var(--space-1);
+  pointer-events: none;
+}
+.caption .name {
+  margin-bottom: var(--space-1);
+}
+.actions {
+  position: fixed;
+  /* centred without transform: the develop animation owns transform */
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: fit-content;
+  bottom: max(var(--space-6), env(safe-area-inset-bottom));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-1) var(--space-4);
+  max-width: calc(100vw - 2 * var(--space-4));
+  animation: s-develop var(--duration-soft) var(--ease-develop) both;
+}
+.actions a.s-btn {
+  text-decoration: none;
+}
+@media (max-width: 560px) {
+  .caption {
+    top: max(var(--space-4), env(safe-area-inset-top));
+    left: var(--space-4);
+    right: var(--space-4);
+  }
+  .actions {
+    bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  }
+}
+
+/* ---------- text develops word by word ---------- */
+.reveal-word {
+  display: inline-block;
+  animation: reveal var(--duration-reveal) var(--ease-develop) both;
+}
+@keyframes reveal {
+  from {
+    opacity: 0;
+    filter: blur(var(--blur-reveal));
+    transform: translateY(0.2em);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reveal-word {
+    animation: fade var(--duration-quick) linear both;
+  }
+  .actions {
+    animation: fade var(--duration-quick) linear both;
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---------- add / change song window ---------- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--veil);
+  -webkit-backdrop-filter: blur(var(--blur-veil));
+  backdrop-filter: blur(var(--blur-veil));
+  animation: fade var(--duration-soft) var(--ease-develop) both;
+  overflow-y: auto;
+}
+.flow {
+  width: min(528px, 100%);
+}
+.flow .s-form {
+  max-width: none;
+}
+.s-form__actions.is-confirm {
+  flex-wrap: wrap;
+}
+.s-drop {
+  position: relative;
+}
+.s-drop.is-missing {
+  border-color: var(--ink-faint);
+}
+.drop-preview {
+  max-height: 160px;
+  max-width: 100%;
+  object-fit: contain;
+}
+.cover-pick .s-field {
+  gap: var(--space-3);
+}
+.cover-drop {
+  min-height: 240px;
+}
+.cover-preview {
+  width: 200px;
+  height: 200px;
+  object-fit: cover;
+  border-radius: var(--radius-none);
+}
+input[type='month'].s-input {
+  color-scheme: light;
+}
+[data-theme='dark'] input[type='month'].s-input {
+  color-scheme: dark;
+}
+@media (max-width: 560px) {
+  .overlay {
+    padding: 0;
+    place-items: end stretch;
+  }
+  .flow {
+    width: 100%;
+    max-height: 100%;
+    overflow-y: auto;
+    border-radius: var(--radius-24) var(--radius-24) 0 0;
+    border-bottom: 0;
+  }
+  .flow .s-window__body {
+    padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
+  }
+}

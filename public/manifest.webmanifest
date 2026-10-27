@@ -1,0 +1,14 @@
+{
+  "name": "synaesthetic",
+  "short_name": "synaesthetic",
+  "description": "Личная полка ароматов: у каждого флакона своя песня и своя картинка.",
+  "lang": "ru",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#efeeec",
+  "theme_color": "#efeeec",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

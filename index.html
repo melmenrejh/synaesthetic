@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>synaesthetic</title>
+    <meta name="description" content="Личная полка ароматов: у каждого флакона своя песня и своя картинка." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <meta name="theme-color" content="#efeeec" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#131214" media="(prefers-color-scheme: dark)" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  </head>
+  <body>
+    <main id="stage" aria-label="Полка"></main>
+
+    <header class="topbar">
+      <div class="brand">
+        <img src="/logo.png" alt="" width="34" height="30" />
+        <span class="name">synaesthetic</span>
+      </div>
+      <button id="add" class="s-btn" type="button" hidden>Добавить флакон</button>
+    </header>
+
+    <section id="empty" class="empty" hidden>
+      <h1 id="empty-title" class="title"></h1>
+      <p class="ui muted">У каждого флакона здесь будет своя песня и своя картинка.</p>
+      <button id="empty-add" class="s-btn s-btn--primary" type="button">Добавить флакон</button>
+    </section>
+
+    <section id="caption" class="caption" hidden aria-live="polite"></section>
+    <nav id="actions" class="actions" hidden aria-label="Действия с конвертом"></nav>
+
+    <ul id="index" class="sr-only" aria-label="Флаконы на полке"></ul>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

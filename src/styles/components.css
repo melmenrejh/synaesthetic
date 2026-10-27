@@ -1,0 +1,425 @@
+/* synaesthetic — components, copied from the design system (components/bundle.css). */
+/* synaesthetic — components. Values come from tokens.css; nothing here hard-codes a colour.
+   Type is written out (size/line, weight) with the mono family var + fallback, so it never depends on --text-* shorthands. */
+
+/* ── Button ─────────────────────────────────────────── */
+/* Sizes and paddings are the --btn-* spacing tokens: change them on the page and every button follows.
+   Word and plated buttons have NO rounding; the primary plate (::before) tears its RIGHT edge
+   (clip-path from --torn-clip, set by Synaesthetic.tear) — so the focus outline is never clipped.
+   The round icon button is the one exception: a true circle with a thin outline, no tear.
+   Every button's text is SemiBold (600). */
+.s-btn {
+  position: relative;
+  isolation: isolate;
+  font: 600 14px/20px var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: -0.01em;
+  color: var(--ink-muted);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-none);
+  padding: var(--btn-word-pad-y, 8px) var(--btn-word-pad-x, 4px);
+  min-height: var(--btn-word-min-h, 32px);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--btn-gap, 8px);
+  cursor: pointer;
+  transition: color var(--duration-quick) var(--ease-develop), border-color var(--duration-quick) var(--ease-develop);
+}
+.s-btn:hover, .s-btn.is-hover { color: var(--ink); }
+.s-btn:focus-visible, .s-btn.is-focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.s-btn[disabled], .s-btn.is-disabled { opacity: var(--opacity-disabled); cursor: default; color: var(--ink-muted); }
+.s-btn.is-current { color: var(--ash); }
+
+/* label: 10px uppercase, for window headers and service actions */
+.s-btn--label {
+  font: 600 10px/12px var(--font-mono, "IBM Plex Mono", monospace);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  min-height: var(--btn-label-min-h, 24px);
+  padding: var(--btn-label-pad-y, 4px) var(--btn-label-pad-x, 4px);
+}
+/* bracket: retro framing, «[ закрыть ]» */
+.s-btn--bracket::before { content: "[\00a0"; }
+.s-btn--bracket::after { content: "\00a0]"; }
+
+/* primary: the ONE plated action of a screen — square corners, torn right edge */
+.s-btn--primary {
+  color: var(--paper);
+  /* right side gets an extra --btn-primary-tear so the torn edge does not eat into the text's air */
+  padding: var(--btn-primary-pad-y, 8px) calc(var(--btn-primary-pad-x, 24px) + var(--btn-primary-tear, 4px)) var(--btn-primary-pad-y, 8px) var(--btn-primary-pad-x, 24px);
+  min-height: 0;
+}
+.s-btn--primary::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--ink);
+  border-radius: var(--radius-none);
+  clip-path: var(--torn-clip, none);
+  transition: background-color var(--duration-quick) var(--ease-develop);
+}
+.s-btn--primary:hover, .s-btn--primary.is-hover { color: var(--paper); }
+.s-btn--primary:hover::before, .s-btn--primary.is-hover::before { background: var(--ash); }
+.s-btn--primary[disabled], .s-btn--primary.is-disabled { color: var(--paper); }
+
+/* round: play / pause and other actions where a word does not fit — a circle with a thin outline */
+.s-btn--round {
+  box-sizing: border-box;
+  width: var(--btn-round-size, 48px); height: var(--btn-round-size, 48px); min-height: 0;
+  padding: 0;
+  justify-content: center;
+  border: 1px solid var(--ink-faint);
+  border-radius: var(--radius-round);
+  color: var(--ink);
+}
+.s-btn--round:hover, .s-btn--round.is-hover { border-color: var(--ink); color: var(--ink); }
+.s-btn--round:focus-visible, .s-btn--round.is-focus { border-radius: var(--radius-round); }
+.s-btn--round svg { width: var(--btn-round-icon, 16px); height: var(--btn-round-icon, 16px); }
+
+/* icon: a bare 16px line icon where a word does not fit and a circle would be too loud — close ×, sound.
+   No outline, no plate; ink-muted → ink like a word. */
+.s-btn--icon {
+  box-sizing: border-box;
+  width: var(--btn-icon-size, 24px); height: var(--btn-icon-size, 24px); min-height: 0;
+  padding: 0;
+  justify-content: center;
+  flex: none;
+}
+.s-btn--icon svg { width: 16px; height: 16px; }
+
+/* ── Field / Input ──────────────────────────────────── */
+.s-field { display: grid; gap: var(--space-2); }
+.s-field__label {
+  font: 500 10px/12px var(--font-mono, "IBM Plex Mono", monospace);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.s-field__hint {
+  /* the field's grid gap is 8; pull the hint up so it sits --field-hint-gap (4) under the input */
+  margin-top: calc(var(--field-hint-gap, 4px) - var(--space-2, 8px));
+  font: 400 10px/16px var(--font-mono, "IBM Plex Mono", monospace); color: var(--ink-muted); min-height: 16px;
+}
+.s-field__hint.is-found { color: var(--ash); }
+.s-field__hint.is-error { color: var(--ink); }
+.s-field__hint.is-error::before { content: "— "; }
+
+.s-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
+  font: 400 14px/20px var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: -0.01em;
+  color: var(--ink);
+  background: var(--field);
+  border: 1px solid transparent;
+  border-radius: var(--radius-8);
+  transition: border-color var(--duration-quick) var(--ease-develop);
+}
+.s-input::placeholder { color: var(--ink-muted); opacity: 1; }
+.s-input:hover, .s-input.is-hover { border-color: var(--ink-faint); }
+.s-input:focus, .s-input.is-focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-color: var(--orchid); }
+/* the active field: its label lights up in orchid too */
+.s-field:focus-within .s-field__label, .s-field.is-active .s-field__label { color: var(--orchid); }
+.s-field__label { transition: color var(--duration-quick) var(--ease-develop); }
+.s-input[disabled], .s-input.is-disabled { opacity: var(--opacity-disabled); }
+.s-input.is-missing { border-color: var(--ink-faint); border-style: dashed; }
+.s-input.is-error { border-color: var(--ink); }
+
+/* note: the personal one — on a paper slip; inside components the type is mono only */
+.s-input--note {
+  height: auto;
+  min-height: 128px;
+  padding: var(--space-4);
+  font: 400 14px/20px var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: -0.01em;
+  background: var(--paper-raised);
+  border-radius: var(--radius-none);
+  resize: vertical;
+}
+.s-input--note::placeholder { color: var(--ink-muted); }
+
+/* ── Attachment ─────────────────────────────────────── */
+/* things laid on the screen: a square note and a polaroid. No shadow, no torn edge, square corners.
+   The slip stays light in both themes; text on it is always slip-ink. */
+.s-attach {
+  box-sizing: border-box;
+  width: var(--attach-size, 240px);
+  background: var(--slip);
+  color: var(--slip-ink);
+  border: 1px solid var(--slip-edge);
+  border-radius: var(--radius-none);
+  position: relative;
+}
+.s-attach:focus-visible, .s-attach.is-focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.s-attach.is-recede { filter: blur(var(--blur-hover)); opacity: var(--opacity-recede); }
+
+/* note: a square slip, text left-aligned and centred vertically */
+.s-attach--note {
+  aspect-ratio: 1 / 1;
+  padding: var(--attach-pad, 24px);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+.s-attach__text {
+  margin: 0;
+  width: 100%;
+  font: 400 14px/20px var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: -0.01em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+.s-attach__text:empty::before { content: attr(data-placeholder); color: var(--slip-ink-muted); }
+.s-attach.is-editing .s-attach__text::after {
+  content: "|";
+  margin-left: 0.25em;
+  animation: s-caret 1100ms steps(1) infinite;
+}
+@keyframes s-caret { 50% { opacity: 0; } }
+
+/* polaroid: square picture in a frame with a deeper bottom for the caption */
+.s-attach--photo { padding: var(--attach-frame, 12px) var(--attach-frame, 12px) 0; }
+.s-attach__img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  background: var(--slip-ink-muted);
+}
+.s-attach__caption {
+  height: var(--attach-caption, 48px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+.s-attach__title {
+  font: 400 14px/20px var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: -0.01em;
+  color: var(--slip-ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.s-attach__meta {
+  font: 400 10px/16px var(--font-mono, "IBM Plex Mono", monospace);
+  color: var(--slip-ink-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@media (prefers-reduced-motion: reduce) { .s-attach.is-editing .s-attach__text::after { animation: none; } }
+
+/* ── Motion helper ──────────────────────────────────── */
+/* develop: a surface appears like a photo in the tray — out of blur, no bounce */
+@keyframes s-develop {
+  from { opacity: 0; filter: blur(var(--blur-reveal)); transform: translateY(-4px); }
+  to   { opacity: 1; filter: blur(0); transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .s-popover, .s-window { animation-name: none !important; }
+}
+
+/* ── Popover / context actions ──────────────────────── */
+.s-popover {
+  box-sizing: border-box;
+  min-width: 224px;
+  max-width: 288px;
+  padding: var(--space-2) 0;
+  background: var(--paper-raised);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-8);
+  box-shadow: var(--shadow-paper);
+  animation: s-develop var(--duration-soft) var(--ease-develop) both;
+}
+.s-popover__head {
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  font: 500 10px/12px var(--font-mono, "IBM Plex Mono", monospace);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.s-popover__sep { height: 1px; margin: var(--space-2) 0; background: var(--hairline); border: 0; }
+.s-menu-item {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--space-3) 0 var(--space-6);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  position: relative;
+  font: 400 14px/20px var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: -0.01em;
+  color: var(--ink-muted);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-none);
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--duration-quick) var(--ease-develop);
+}
+/* the row under the pointer is marked by an arrow in the reserved left column; only the chosen option gets a plate */
+.s-menu-item::before {
+  content: "→";
+  position: absolute;
+  left: var(--space-2);
+  opacity: 0;
+  color: var(--orchid);
+  transition: opacity var(--duration-quick) var(--ease-develop);
+}
+.s-menu-item:hover, .s-menu-item.is-hover,
+.s-menu-item:focus-visible, .s-menu-item.is-focus { color: var(--ink); outline: none; }
+.s-menu-item:hover::before, .s-menu-item.is-hover::before,
+.s-menu-item:focus-visible::before, .s-menu-item.is-focus::before { opacity: 1; }
+.s-menu-item:focus-visible, .s-menu-item.is-focus { box-shadow: inset 2px 0 0 var(--focus-ring); }
+/* the chosen option: orchid text on an orchid-soft plate, an orchid dot in the left column (the arrow replaces it on hover) */
+.s-menu-item.is-current { color: var(--orchid); background: var(--orchid-soft); }
+.s-menu-item.is-current::before { content: "•"; opacity: 1; }
+.s-menu-item.is-current:hover::before, .s-menu-item.is-current.is-hover::before,
+.s-menu-item.is-current:focus-visible::before, .s-menu-item.is-current.is-focus::before { content: "→"; }
+.s-menu-item[disabled], .s-menu-item.is-disabled { opacity: var(--opacity-disabled); cursor: default; }
+.s-menu-item[disabled]::before { opacity: 0; }
+.s-menu-item__meta {
+  margin-left: auto;
+  font: 400 10px/16px var(--font-mono, "IBM Plex Mono", monospace);
+  color: var(--ink-muted);
+}
+.s-popover__confirm { padding: var(--space-2) var(--space-3) var(--space-1); display: grid; gap: var(--space-2); }
+.s-popover__confirm p { margin: 0; font: 400 14px/20px var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: -0.01em; color: var(--ink); }
+.s-popover__confirm div { display: flex; gap: var(--space-3); }
+
+/* ── Window ─────────────────────────────────────────── */
+.s-window {
+  box-sizing: border-box;
+  background: var(--paper-raised);
+  color: var(--ink);
+  border: 1px solid var(--ink-faint);
+  border-radius: var(--radius-16);
+  box-shadow: var(--shadow-paper);
+  overflow: hidden;
+  animation: s-develop var(--duration-soft) var(--ease-develop) both;
+}
+.s-window__bar {
+  height: 28px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--hairline);
+}
+.s-window__title {
+  font: 500 10px/12px var(--font-mono, "IBM Plex Mono", monospace);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.s-window__body { padding: var(--space-6); }
+
+/* ── Form ───────────────────────────────────────────── */
+.s-form { display: grid; gap: var(--space-4); max-width: 480px; }
+.s-form__steps {
+  font: 400 10px/16px var(--font-mono, "IBM Plex Mono", monospace);
+  color: var(--ink-muted);
+  display: flex; gap: var(--space-2); flex-wrap: wrap;
+}
+.s-form__steps .is-current { color: var(--ink); }
+.s-form__row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+@media (max-width: 440px) { .s-form__row { grid-template-columns: 1fr; } }
+.s-form__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--hairline);
+}
+.s-drop {
+  box-sizing: border-box;
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  text-align: center;
+  font: 400 14px/20px var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: -0.01em;
+  color: var(--ink-muted);
+  background: var(--field);
+  border: 1px dashed var(--ink-faint);
+  border-radius: var(--radius-8);
+}
+.s-drop.is-over { border-style: solid; border-color: var(--ink); color: var(--ink); }
+
+/* ── Player panel ───────────────────────────────────── */
+/* one row: round play/pause · track + progress · volume. Lies on the blurred cover (blur-ambient + veil). */
+.s-player {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  max-width: 640px;
+  background: var(--paper-raised);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-16);
+  box-shadow: var(--shadow-paper);
+}
+.s-player__info { min-width: 0; display: grid; gap: var(--space-1); }
+.s-player__track {
+  font: 400 14px/20px var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: -0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.s-player__track b { font-weight: 400; color: var(--ink); }
+.s-player__track span { color: var(--ink-muted); }
+.s-player__progress {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  font: 400 10px/16px var(--font-mono, "IBM Plex Mono", monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+}
+.s-player__note { font: 400 10px/16px var(--font-mono, "IBM Plex Mono", monospace); color: var(--ink-muted); display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.s-player__volume { display: flex; align-items: center; gap: var(--space-2); }
+.s-player__volume .s-range { width: var(--space-24, 96px); }
+.s-player__level {
+  width: 3ch; text-align: right;
+  font: 400 10px/16px var(--font-mono, "IBM Plex Mono", monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+}
+.s-player.is-muted .s-player__volume .s-range, .s-player.is-muted .s-player__level { opacity: var(--opacity-disabled); }
+.s-player__volume.is-disabled { opacity: var(--opacity-disabled); }
+/* external: the track lives in another service — track on the left, the round ↗ link on the right (going on, going out) */
+.s-player--external { grid-template-columns: minmax(0, 1fr) auto; }
+@media (max-width: 480px) {
+  .s-player { grid-template-columns: auto minmax(0, 1fr); }
+  .s-player--external { grid-template-columns: minmax(0, 1fr) auto; }
+  .s-player__volume { grid-column: 1 / -1; }
+  .s-player__volume .s-range { flex: 1; width: auto; }
+}
+
+/* ── Range (progress, volume) ───────────────────────── */
+/* a 1px line: played part ink, rest ink-faint; the thumb is a 2×12 ink tick. Set --val (0–100%) from code. */
+.s-range {
+  -webkit-appearance: none; appearance: none;
+  height: 16px; margin: 0; padding: 0;
+  background: transparent;
+  cursor: pointer;
+  --val: 0%;
+}
+.s-range::-webkit-slider-runnable-track {
+  height: 1px;
+  background: linear-gradient(to right, var(--ink) var(--val), var(--ink-faint) var(--val));
+}
+.s-range::-moz-range-track { height: 1px; background: var(--ink-faint); }
+.s-range::-moz-range-progress { height: 1px; background: var(--ink); }
+.s-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 2px; height: 12px; margin-top: -5.5px;
+  background: var(--ink); border: 0; border-radius: var(--radius-none);
+  transition: width var(--duration-quick) var(--ease-develop);
+}
+.s-range::-moz-range-thumb { width: 2px; height: 12px; background: var(--ink); border: 0; border-radius: var(--radius-none); }
+.s-range:hover::-webkit-slider-thumb { width: 4px; }
+.s-range:focus { outline: none; }
+.s-range:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.s-range:disabled { cursor: default; }
