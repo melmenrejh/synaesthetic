@@ -73,6 +73,32 @@ const DROP = { seconds: 1.1, tumble: 0.7 };
  */
 const HOVER_LIFT = { front: 0.1, back: 0.5 };
 
+/**
+ * Paging between shelves. `peek`: how far the first gesture leans the view toward the next shelf
+ * (a share of the view's width); `peekSeconds`: how long it waits for the second (then leans back, the
+ * hint's own 4 s); `travelSeconds` / `leanSeconds`: how long the view takes to another shelf / to
+ * lean. A swipe counts past `swipePx`, a scroll past `wheelPx` of movement, and the next scroll only
+ * after `wheelPauseMs` of quiet.
+ */
+const PAGING = { peek: 0.12, peekSeconds: 4, travelSeconds: 1.2, leanSeconds: 0.8, swipePx: 40, wheelPx: 40, wheelPauseMs: 350 };
+
+/**
+ * The design system's ease-settle, cubic-bezier(0.65, 0, 0.35, 1): for things that move from one
+ * place to another. x and y of the curve are solved by bisection (it is monotonic).
+ */
+function easeSettle(x: number) {
+  const bez = (t: number, a: number, b: number) => 3 * (1 - t) ** 2 * t * a + 3 * (1 - t) * t ** 2 * b + t ** 3;
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  let lo = 0, hi = 1, t = x;
+  for (let i = 0; i < 20; i++) {
+    t = (lo + hi) / 2;
+    if (bez(t, 0.65, 0.35) < x) lo = t;
+    else hi = t;
+  }
+  return bez(t, 0, 1);
+}
+
 /** The studio the bake was lit with; the sleeves get the same light. */
 const ENV_URL = '/env/wooden_studio_08_1k.hdr';
 const MODEL_URL = '/models/shelf.glb';
@@ -119,6 +145,10 @@ export interface ShelfCallbacks {
   onPutBack(): void;
   /** The record went in or out by hand (the pull gesture), not through `toggleRecord`. */
   onChange?(): void;
+  /** The view leans toward the next (1) or previous (−1) shelf, waiting for a second gesture; 0: no longer. */
+  onPeek?(dir: -1 | 0 | 1): void;
+  /** The wall has loaded: what lies on it can take its tone (`wallTone`). */
+  onWall?(): void;
   /** The model could not be loaded. */
   onError?(e: unknown): void;
 }
@@ -134,6 +164,14 @@ const INK_LIGHT = '#e9e8e6';
 function luminance(hex: string) {
   const c = new THREE.Color(hex); // linear already
   return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+}
+
+/** 'dark' (light text) or 'light' (dark text) on a background: the ink with more contrast wins. */
+function toneFor(background: string): 'light' | 'dark' {
+  const l = luminance(background);
+  const onDark = (luminance(INK_LIGHT) + 0.05) / (l + 0.05);
+  const onLight = (l + 0.05) / (luminance(INK_DARK) + 0.05);
+  return onDark >= onLight ? 'dark' : 'light';
 }
 
 /** `flipY: false` for textures on glTF models, whose UVs read images top down. */
@@ -179,10 +217,15 @@ export class Shelf {
   private target = new THREE.Vector3();
   private dir = new THREE.Vector3(0, 0, 1);
   private dist = 5;
+  /** How far along the wall the view is now, and its journey toward page and peek. */
   private pan = 0;
-  private panMax = 0;
+  private panTween = { from: 0, to: 0, t: 0, dur: 1 };
+  /** The shelf in view (one module per `slots.length` sleeves), how many there are, and the lean. */
+  private page = 0;
+  private pages = 1;
+  private peek: -1 | 0 | 1 = 0;
+  private peekTimer = 0;
   private pickD = 2;
-  private visibleW = 1;
   private raf = 0;
   private last = 0;
   private reduce = matchMedia('(prefers-reduced-motion: reduce)');
@@ -195,12 +238,20 @@ export class Shelf {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // the baked shelf throws a live shadow onto a lit wall (shelf/model.ts)
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.canvas = this.renderer.domElement;
     host.prepend(this.canvas);
 
-    // Soft key light from the studio ceiling on the sleeves. Sleeves cast no shadows: the shelf's
-    // shadow is baked, and a live one would never match it.
+    // Soft key light from the studio ceiling, on the sleeves and the lit wall. It casts the shelf's
+    // shadow onto the wall; sleeves cast none (the user's call).
     const sun = this.sun;
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.radius = 10;
+    sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.02;
     this.scene.add(sun, sun.target, this.fill, this.fill.target, this.modules, this.veil.mesh);
     // lights shine on both passes; the water lives in the front one with the sleeve in hand
     sun.layers.enableAll();
@@ -239,6 +290,7 @@ export class Shelf {
       this.model = model;
       this.k = model.slots[0].size / SIZE;
       this.scene.background = model.wallColor;
+      this.cb.onWall?.();
       // sleeves built before the record model arrived get rebuilt with it
       if (record && this.items.length) this.setItems(this.items.map(({ entry, images }) => ({ entry, images })));
       this.layout();
@@ -387,17 +439,21 @@ export class Shelf {
   }
 
   /**
+   * Which text reads on the wall (the top bar, the hint, the credits): 'dark' for light text,
+   * 'light' for dark text, by the wall's own colour. Null until the model has loaded.
+   */
+  get wallTone(): 'light' | 'dark' | null {
+    return this.model ? toneFor(`#${this.model.wallColor.getHexString()}`) : null;
+  }
+
+  /**
    * Which text reads on the water behind the sleeve in hand: 'dark' for light text, 'light' for
    * dark text, null when the water wears the theme's own colours. Of the two inks, the one with
    * more contrast wins.
    */
   get backdropTone(): 'light' | 'dark' | null {
     const tint = this.waterOwner ? this.coverTint(this.waterOwner) : null;
-    if (!tint) return null;
-    const l = luminance(tint.water);
-    const onDark = (luminance(INK_LIGHT) + 0.05) / (l + 0.05);
-    const onLight = (l + 0.05) / (luminance(INK_DARK) + 0.05);
-    return onDark >= onLight ? 'dark' : 'light';
+    return tint ? toneFor(tint.water) : null;
   }
 
   pick(i: number) {
@@ -409,6 +465,8 @@ export class Shelf {
     this.setFront(this.items[i], true);
     // water still hidden: it comes up already in the cover's colours; already shown: it flows to them
     this.aimWater(this.items[i], this.veil.opacity < 0.01);
+    // picked from another shelf (the keyboard's list): the view goes to that shelf
+    if (this.model) this.goTo(Math.floor(i / this.model.slots.length));
     this.cb.onPick(this.items[i].entry);
     this.invalidate();
   }
@@ -611,9 +669,10 @@ export class Shelf {
     const contentH = slotTop - box.min.y;
     const t = 2 * Math.tan(THREE.MathUtils.degToRad(this.cam.fov / 2));
     this.dist = Math.max(contentW / VIEW.fill / (t * this.cam.aspect), contentH / VIEW.fillHeight / t);
-    this.visibleW = this.dist * t * this.cam.aspect;
-    this.panMax = (count - 1) * m.width;
-    this.pan = THREE.MathUtils.clamp(this.pan, 0, this.panMax);
+    this.viewT = t;
+    this.pages = count;
+    if (this.page > count - 1) this.goTo(count - 1);
+    this.pan = THREE.MathUtils.clamp(this.pan, 0, (count - 1) * m.width);
 
     // the sleeve in hand fills ~70% of the short side, with room for the record pulled out
     const S = SIZE * this.k;
@@ -623,12 +682,65 @@ export class Shelf {
     this.invalidate();
   }
 
-  private panBy(world: number) {
-    const p = THREE.MathUtils.clamp(this.pan + world, 0, this.panMax);
-    if (p !== this.pan) {
-      this.pan = p;
-      this.invalidate();
+  // ---------- paging between shelves ----------
+  // One gesture toward the next shelf (a scroll, a swipe, an arrow key) only leans the view that
+  // way and says so; a second one in the same direction carries it there. Nobody has to scroll the
+  // whole wall by hand.
+
+  /** Leans toward the next (+1) or previous (−1) shelf, or goes there if already leaning. */
+  nudge(dir: 1 | -1) {
+    if (this.s.picked >= 0) return;
+    const to = this.page + dir;
+    if (to < 0 || to >= this.pages) return;
+    if (this.peek === dir) {
+      this.goTo(to);
+      return;
     }
+    this.peek = dir;
+    clearTimeout(this.peekTimer);
+    this.peekTimer = window.setTimeout(() => this.endPeek(), PAGING.peekSeconds * 1000);
+    this.cb.onPeek?.(dir);
+    this.invalidate();
+  }
+
+  private goTo(page: number) {
+    this.page = page;
+    this.endPeek();
+  }
+
+  private endPeek() {
+    clearTimeout(this.peekTimer);
+    if (this.peek) this.cb.onPeek?.(0);
+    this.peek = 0;
+    this.invalidate();
+  }
+
+  /** How far along the wall the view stands for a shelf and a lean (a share of the view's width). */
+  private panFor(page: number, peek: number) {
+    const m = this.model;
+    if (!m) return 0;
+    const viewW = this.dist * this.viewT * this.cam.aspect;
+    return page * m.width + peek * PAGING.peek * viewW;
+  }
+
+  /**
+   * Where the hint goes: above the middle of the shelf in view, in CSS pixels, as it will stand
+   * once the view has finished leaning.
+   */
+  hintAnchor(): { x: number; y: number } | null {
+    const m = this.model;
+    if (!m) return null;
+    const top = Math.max(...m.slots.map((s) => s.pos.y + s.size / 2));
+    const shelf = this.target.clone().addScaledVector(m.along, this.page * m.width);
+    shelf.y = top + SIZE * this.k * 0.25;
+    // the camera where the lean will leave it
+    const look = this.target.clone().addScaledVector(m.along, this.panFor(this.page, this.peek));
+    const cam = this.cam.clone();
+    cam.position.copy(look).addScaledVector(this.dir, this.dist);
+    cam.lookAt(look);
+    cam.updateMatrixWorld();
+    const p = shelf.project(cam);
+    return { x: ((p.x + 1) / 2) * this.host.clientWidth, y: ((1 - p.y) / 2) * this.host.clientHeight };
   }
 
   // ---------- frames on demand ----------
@@ -678,6 +790,20 @@ export class Shelf {
     const s = this.s;
     const m = this.model;
 
+    // the view travels along the wall on the design system's ease-settle: it sets off gently and
+    // comes to rest gently, over PAGING.travelSeconds to another shelf, PAGING.leanSeconds to lean
+    if (m) {
+      const to = this.panFor(this.page, this.peek);
+      const tw = this.panTween;
+      if (to !== tw.to) {
+        const far = Math.abs(to - this.pan) > m.width / 2;
+        Object.assign(tw, { from: this.pan, to, t: 0, dur: far ? PAGING.travelSeconds : PAGING.leanSeconds });
+      }
+      if (reduce) tw.t = tw.dur;
+      tw.t = Math.min(tw.dur, tw.t + dt);
+      this.pan = tw.from + (tw.to - tw.from) * easeSettle(tw.t / tw.dur);
+      if (tw.t < tw.dur) moving = true;
+    }
     const look = this.target.clone();
     if (m) look.addScaledVector(m.along, this.pan);
     this.cam.position.copy(look).addScaledVector(this.dir, this.dist);
@@ -686,7 +812,16 @@ export class Shelf {
     this.cam.getWorldDirection(this.camFwd);
     this.camRight.setFromMatrixColumn(this.cam.matrixWorld, 0);
     this.sun.target.position.copy(look);
-    if (m) this.sun.position.copy(look).addScaledVector(m.wallNormal, 2).add(new THREE.Vector3(0, 4, 0)).addScaledVector(m.along, -1);
+    if (m) {
+      this.sun.position.copy(look).addScaledVector(m.wallNormal, 2).add(new THREE.Vector3(0, 4, 0)).addScaledVector(m.along, -1);
+      // the shadow map covers the shelf in view and the wall below it
+      const sc = this.sun.shadow.camera;
+      const r = m.width / 2;
+      if (sc.right !== r) {
+        Object.assign(sc, { left: -r, right: r, top: r, bottom: -r, near: 0.1, far: 20 });
+        sc.updateProjectionMatrix();
+      }
+    }
 
     // the float of the sleeve in hand: comes in once it has arrived, rests while it is being turned
     this.camUp.setFromMatrixColumn(this.cam.matrixWorld, 1);
@@ -898,9 +1033,6 @@ export class Shelf {
         this.s.rotY += (e.clientX - last.x) * 0.009;
         this.s.rotX = THREE.MathUtils.clamp(this.s.rotX + (e.clientY - last.y) * 0.009, -1.1, 1.1);
         this.invalidate();
-      } else if (down && this.s.picked < 0) {
-        // dragging the wall slides along it, to the next shelves
-        this.panBy((-(e.clientX - last.x) * this.visibleW) / cv.clientWidth);
       } else if (!down && this.s.picked < 0 && e.pointerType === 'mouse') {
         const h = this.hitAt(e);
         if (h !== this.s.hover) {
@@ -917,6 +1049,7 @@ export class Shelf {
     });
     cv.addEventListener('pointerup', (e) => {
       this.s.dragging = false;
+      const start = down;
       down = null;
       const pull = this.s.pull;
       if (pull) {
@@ -928,6 +1061,11 @@ export class Shelf {
           this.cb.onChange?.();
         }
         this.invalidate();
+      }
+      // a sideways swipe across the wall: one step toward the next or previous shelf
+      if (moved && this.s.picked < 0 && start) {
+        const dx = e.clientX - start.x, dy = e.clientY - start.y;
+        if (Math.abs(dx) > PAGING.swipePx && Math.abs(dx) > Math.abs(dy)) this.nudge(dx < 0 ? 1 : -1);
       }
       if (moved) return;
       const h = this.hitAt(e);
@@ -947,13 +1085,23 @@ export class Shelf {
         this.invalidate();
       }
     });
+    // A scroll is one gesture however many wheel events it sends (a trackpad sends dozens, with
+    // inertia): it counts once its movement adds up, and the next one only after a pause.
+    let wheelSum = 0;
+    let wheelQuiet = 0;
+    let wheelSpent = false;
     cv.addEventListener(
       'wheel',
       (e) => {
         if (this.s.picked >= 0) return;
         e.preventDefault();
-        const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-        this.panBy((d * this.visibleW) / cv.clientWidth);
+        clearTimeout(wheelQuiet);
+        wheelQuiet = window.setTimeout(() => ((wheelSum = 0), (wheelSpent = false)), PAGING.wheelPauseMs);
+        if (wheelSpent) return;
+        wheelSum += Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        if (Math.abs(wheelSum) < PAGING.wheelPx) return;
+        wheelSpent = true;
+        this.nudge(wheelSum > 0 ? 1 : -1);
       },
       { passive: false },
     );

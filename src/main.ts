@@ -31,7 +31,13 @@ await Promise.race([
 
 // ---------- the shelf ----------
 try {
-  shelf = new Shelf($('stage'), { onPick: showHeld, onPutBack: hideHeld, onChange: syncActions });
+  shelf = new Shelf($('stage'), {
+    onPick: showHeld,
+    onPutBack: hideHeld,
+    onChange: syncActions,
+    onPeek: showPeekHint,
+    onWall: applyWallTone,
+  });
 } catch {
   $('stage').append(h('p', { class: 'fail ui' }, 'Этот браузер не смог запустить 3D. Открой страницу в свежем Chrome, Safari или Firefox.'));
 }
@@ -88,6 +94,43 @@ function hideHeld() {
   $('actions').hidden = true;
   setTextTone(null);
   void syncAudio();
+}
+
+// ---------- what lies on the wall ----------
+// The top bar, the empty-shelf words and the credits sit on the wall, whose colour comes from the
+// model (dark plaster, light paint…): they take the light or the dark ink by the wall, not by the theme.
+function applyWallTone() {
+  const tone = shelf?.wallTone ?? 'dark';
+  for (const el of document.querySelectorAll<HTMLElement>('.topbar, .empty, .credits')) el.dataset.theme = tone;
+}
+
+// ---------- paging hint ----------
+// While the view leans toward the next shelf, a quiet toast (design system: Toast, quiet) above
+// the shelf in view says where the next gesture will go. It leaves when the step is made or
+// the lean times out.
+let peekHint: HTMLElement | null = null;
+
+function showPeekHint(dir: -1 | 0 | 1) {
+  if (peekHint) {
+    const old = peekHint;
+    old.querySelector('.s-toast')?.classList.add('is-leaving');
+    setTimeout(() => old.remove(), 420);
+    peekHint = null;
+  }
+  const at = dir && shelf?.hintAnchor();
+  if (!at) return;
+  // on the wall, as the top bar: the wall's tone, whatever the theme
+  peekHint = h(
+    'div',
+    { class: 's-toast-stack s-toast-stack--quiet shelf-hint', 'data-theme': shelf?.wallTone ?? 'dark' },
+    h(
+      'div',
+      { class: 's-toast s-toast--quiet', role: 'status' },
+      h('span', { class: 's-toast__text' }, dir > 0 ? 'следующая полка' : 'предыдущая полка'),
+    ),
+  );
+  Object.assign(peekHint.style, { left: `${at.x}px`, top: `${at.y}px`, transform: 'translate(-50%, -100%)' });
+  document.body.append(peekHint);
 }
 
 // On water in a cover's colours, the caption and the words take the light or the dark ink,
@@ -152,18 +195,24 @@ const trackLine = (e: ShelfEntry) => {
 function syncActions() {
   const e = shelf?.pickedEntry;
   if (!shelf || !e) return;
-  const word = (text: string, run: () => void, cls = '') =>
-    h('button', { type: 'button', class: `s-btn ${cls}`.trim(), onclick: () => (run(), syncActions()) }, text);
+  // round icon buttons (design system: Button, round): the name shows on hover and is read aloud
+  const iconButton = (name: 'swap' | 'plus' | 'trash', label: string, run: () => void) => {
+    const b = h('button', { type: 'button', class: 's-btn s-btn--round', 'aria-label': label, title: label, onclick: () => run() });
+    b.append(icon(name));
+    return b;
+  };
   const bar = $('actions');
   const out = shelf.recordOut;
   // Turning, the record and going back to the shelf are gestures (drag the sleeve, pull its right
-  // half, tap beside it or Esc); only what has no gesture stays a word here.
+  // half, tap beside it or Esc); only what has no gesture stays here, as icons under the caption.
   bar.replaceChildren(
     ...present(
       out && e.current?.track.sourceUrl ? listenLink(e) : null,
-      word(e.current ? 'Сменить песню' : 'Добавить песню', () => changeSong(e)),
+      e.current
+        ? iconButton('swap', 'Сменить песню', () => changeSong(e))
+        : iconButton('plus', 'Добавить песню', () => changeSong(e)),
       // irreversible: last, and asks first
-      word('Удалить', () => void removeBottle(e)),
+      iconButton('trash', 'Удалить', () => void removeBottle(e)),
     ),
   );
   bar.hidden = false;
@@ -206,6 +255,11 @@ addEventListener('keydown', (e) => {
   if (document.querySelector('.overlay')) return;
   if (e.key === 'Escape') shelf?.putBack();
   const onControl = e.target instanceof HTMLElement && e.target.closest('button, a, input, textarea');
+  // arrows page between shelves, like a scroll: the first leans, the second goes
+  if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && !shelf?.pickedEntry && !onControl) {
+    e.preventDefault();
+    shelf?.nudge(e.key === 'ArrowRight' ? 1 : -1);
+  }
   if (e.key === ' ' && shelf?.pickedEntry?.current && !onControl) {
     e.preventDefault();
     shelf.toggleRecord();

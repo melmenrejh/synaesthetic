@@ -16,7 +16,7 @@
   <body>
     <main id="stage" aria-label="Полка"></main>
 
-    <!-- the wall is dark in both themes (its light is baked), so what lies on it uses night colours -->
+    <!-- on the wall: the wall's tone once the model has loaded (main.ts, applyWallTone); dark until then -->
     <header class="topbar" data-theme="dark">
       <div class="brand">
         <img src="/logo.png" alt="" width="34" height="30" />
@@ -31,8 +31,10 @@
       <button id="empty-add" class="s-btn s-btn--primary" type="button">Добавить флакон</button>
     </section>
 
-    <section id="caption" class="caption" hidden aria-live="polite"></section>
-    <nav id="actions" class="actions" hidden aria-label="Действия с конвертом"></nav>
+    <div class="held-info">
+      <section id="caption" class="caption" hidden aria-live="polite"></section>
+      <nav id="actions" class="actions" hidden aria-label="Действия с конвертом"></nav>
+    </div>
 
     <ul id="index" class="sr-only" aria-label="Флаконы на полке"></ul>
 

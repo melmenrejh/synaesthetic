@@ -423,3 +423,66 @@
 .s-range:focus { outline: none; }
 .s-range:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .s-range:disabled { cursor: default; }
+
+/* ── Toast ──────────────────────────────────────────── */
+/* a short system note that appears and goes by itself: a slip of paper at the bottom of the screen.
+   No icons of status; words say what happened, one label action at most. */
+.s-toast-stack {
+  position: fixed; z-index: 90; left: 50%; bottom: var(--space-6); transform: translateX(-50%);
+  width: min(calc(100% - 2 * var(--space-4)), 400px);
+  display: grid; gap: var(--space-2); pointer-events: none;
+}
+@media (min-width: 720px) { .s-toast-stack { left: var(--space-10); bottom: var(--space-10); transform: none; } }
+.s-toast {
+  position: relative; box-sizing: border-box; pointer-events: auto; overflow: hidden;
+  display: flex; align-items: center; gap: var(--space-3);
+  min-height: 40px; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background: var(--paper-raised); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-8);
+  box-shadow: var(--shadow-paper);
+  font: 400 14px/20px var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: -0.01em;
+  animation: s-develop var(--duration-soft) var(--ease-develop) both;
+}
+.s-toast__text { flex: 1; min-width: 0; padding: 2px 0; }
+.s-toast__text b { font-weight: 400; color: var(--ink); }
+.s-toast__muted { color: var(--ink-muted); }
+.s-toast .s-btn--label { flex: none; }
+.s-toast .s-btn--icon { flex: none; }
+/* "now playing": an orchid dot before the text */
+.s-toast__dot { flex: none; width: 6px; height: 6px; border-radius: var(--radius-round); background: var(--orchid); }
+/* error: critical border, the text says what to do */
+.s-toast.is-error { border-color: var(--critical); }
+/* time left: a 1px line along the bottom edge that runs out; pauses on hover / focus */
+.s-toast__timer {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--ink-faint);
+  transform-origin: left; animation: s-toast-timer var(--toast-duration, 6s) linear both;
+}
+.s-toast:hover .s-toast__timer, .s-toast:focus-within .s-toast__timer { animation-play-state: paused; }
+@keyframes s-toast-timer { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+/* actions under or beside the text */
+.s-toast__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-2); flex: none; }
+
+/* quiet: no plate — screen-level words in Prata (reading 24/32) straight on the paper, centred on the screen.
+   Stacked vertically and centred: text, then the label actions under it, then the timer. */
+.s-toast--quiet {
+  display: grid; justify-items: center; text-align: center; gap: var(--space-2);
+  min-height: 0; padding: 0; overflow: visible;
+  background: none; border: 0; border-radius: 0; box-shadow: none;
+  font: 400 24px/32px var(--font-serif, Prata, Georgia, serif); letter-spacing: -0.01em;
+}
+.s-toast--quiet .s-toast__text { padding: 0; }
+.s-toast--quiet .s-toast__actions { justify-content: center; }
+.s-toast--quiet .s-toast__dot { display: inline-block; vertical-align: middle; margin: 0 var(--space-3) 4px 0; }
+.s-toast--quiet .s-toast__muted { font-size: inherit; }
+/* timer: a short 1px line under the actions instead of the plate's bottom edge */
+.s-toast--quiet .s-toast__timer { position: static; width: 64px; transform-origin: center; }
+/* error: no border to colour, so the words themselves take critical */
+.s-toast--quiet.is-error .s-toast__text { color: var(--critical); }
+/* no plate, so the words carry a soft halo of paper; still, place the quiet toast over calm paper, not over photos */
+.s-toast--quiet .s-toast__text { text-shadow: 0 0 8px var(--paper), 0 0 16px var(--paper), 0 0 24px var(--paper); }
+.s-toast-stack--quiet { gap: var(--space-6); isolation: isolate; top: 50%; bottom: auto; left: 50%; transform: translate(-50%, -50%); width: min(calc(100% - 2 * var(--space-4)), 560px); }
+@media (min-width: 720px) { .s-toast-stack--quiet { left: 50%; bottom: auto; transform: translate(-50%, -50%); } }
+
+/* leaving: back into blur */
+.s-toast.is-leaving { animation: s-develop var(--duration-soft) var(--ease-develop) reverse both; }
+@media (prefers-reduced-motion: reduce) { .s-toast, .s-toast.is-leaving { animation: none; } .s-toast__timer { animation: none; display: none; } }

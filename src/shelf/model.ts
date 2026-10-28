@@ -50,8 +50,13 @@ export async function loadShelfModel(url: string): Promise<ShelfModel> {
     const dims = [s.x, s.y, s.z].sort((a, c) => a - c);
     return { thin: dims[0], area: dims[1] * dims[2] };
   };
+  // flat relative to its size: a scaled-up plane is thin, though not zero
+  const isFlat = (b: THREE.Box3) => {
+    const s = b.getSize(new THREE.Vector3());
+    return flatness(b).thin < 0.01 * Math.max(s.x, s.y, s.z);
+  };
   const wall = meshes
-    .filter((m) => flatness(boxOf(m)).thin < 1e-3)
+    .filter((m) => isFlat(boxOf(m)))
     .sort((a, b) => flatness(boxOf(b)).area - flatness(boxOf(a)).area)[0];
   if (!wall) throw new Error('shelf.glb: no wall (a flat mesh) found');
   const shelfMeshes = meshes.filter((m) => m !== wall);
@@ -73,11 +78,18 @@ export async function loadShelfModel(url: string): Promise<ShelfModel> {
   const wallSize = wallBox.getSize(new THREE.Vector3());
   const width = Math.abs(wallSize.dot(along));
 
-  // Baked light lives in the textures: show them as they are, unlit. Sleeves cast no shadows
-  // (the user's call): the baked shadow of the shelf is the only one.
+  // Two kinds of surface. A real material (with relief or roughness maps, like the painted wall)
+  // is lit by the scene and takes live shadows. A baked one (light in its colour texture, like the
+  // shelf) is shown as it is, unlit, and throws a live shadow onto the lit ones. Sleeves cast no
+  // shadows (the user's call).
   for (const m of meshes) {
     const old = m.material as THREE.MeshStandardMaterial;
+    if (old.normalMap || old.roughnessMap) {
+      m.receiveShadow = true;
+      continue;
+    }
     m.material = new THREE.MeshBasicMaterial({ map: old.map, side: old.side, toneMapped: false });
+    m.castShadow = true;
     old.dispose();
   }
 
