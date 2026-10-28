@@ -139,6 +139,34 @@ h2 {
   }
 }
 
+/* ---------- credits ---------- */
+.credits {
+  position: fixed;
+  right: max(var(--space-10), env(safe-area-inset-right));
+  bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  left: var(--space-4);
+  text-align: right;
+  color: var(--ink-muted);
+  transition: opacity var(--duration-soft) var(--ease-develop);
+}
+.credits a {
+  color: inherit;
+  text-underline-offset: 2px;
+  transition: color var(--duration-quick) var(--ease-develop);
+}
+.credits a:hover {
+  color: var(--ink);
+}
+.is-held .credits {
+  opacity: 0;
+  pointer-events: none;
+}
+@media (max-width: 560px) {
+  .credits {
+    right: var(--space-4);
+  }
+}
+
 /* ---------- empty shelf ---------- */
 .empty {
   position: fixed;

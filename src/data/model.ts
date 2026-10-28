@@ -16,6 +16,7 @@ export interface Bottle {
   cutout?: string;
   /** Up to three hex colours taken from the photo. */
   palette: string[];
+  /** Local date and time it was added (see `now`); orders the shelf. */
   addedAt: string;
 }
 
@@ -25,7 +26,7 @@ export interface Pairing {
   trackId: string;
   /** Blob id of the person's own cover; without it the track artwork is the cover. */
   coverImage?: string;
-  /** ISO date: the day the song was put on (no back-dating). */
+  /** Local date and time the song was put on (no back-dating; see `now`). */
   from: string;
   /** Absent for the current pairing. */
   to?: string;
@@ -53,8 +54,15 @@ export interface ShelfEntry {
 
 export const newId = () => crypto.randomUUID();
 
-/** 'YYYY-MM-DD' of today, local time. */
-export const today = () => new Date().toLocaleDateString('sv-SE');
+/**
+ * Local date and time to the millisecond, 'YYYY-MM-DDTHH:mm:ss.sss'. Down to the millisecond so
+ * that two bottles added on the same day still keep their order; screens show only the month.
+ * (Records written before this were date-only; on the same day those sort before these.)
+ */
+export const now = () => {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 23);
+};
 
 /** '2024-03-01' → '03.2024' */
 export const monthLabel = (iso: string) => `${iso.slice(5, 7)}.${iso.slice(0, 4)}`;

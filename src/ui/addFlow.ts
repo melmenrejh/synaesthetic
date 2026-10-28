@@ -2,7 +2,7 @@
 // Built on the design system's Form, Input and Button: a window over the blurred shelf, one column,
 // the result of a pasted link shown right under the field (MVP doc §4).
 import { addBottle, findBottle, putBlob, setSong } from '../data/db';
-import { today, type PhotoSource, type ShelfEntry } from '../data/model';
+import { now, type PhotoSource, type ShelfEntry } from '../data/model';
 import { tearAll } from '../ds/tear';
 import { isAudio, readTags, tagsFromName } from '../audio/tags';
 import { cutout, paletteOf, prepareImage } from '../images/process';
@@ -500,8 +500,8 @@ export function openAddFlow(mode: FlowMode, onSaved: (bottleId: string) => void)
             platformLinks: track.links,
             localFile,
           },
-          // a song starts the day it is put on: no back-dating
-          today(),
+          // a song starts the moment it is put on: no back-dating
+          now(),
           own,
         );
       }

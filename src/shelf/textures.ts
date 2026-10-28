@@ -245,9 +245,28 @@ export function stickerCanvas(e: ShelfEntry, img: SleeveImages, S: number): Stic
   return null;
 }
 
-export function vinylCanvas(e: ShelfEntry, S: number) {
+/** The record model's colour texture and where its labels lie on it (see shelf/record.ts). */
+export interface RecordSkin {
+  image: CanvasImageSource;
+  /**
+   * Label centres and radii as shares of the texture's side; `rot` turns our label to read upright,
+   * `mirror` flips it for a model whose UVs show the texture mirrored.
+   */
+  labels: { u: number; v: number; r: number; rot: number; mirror: boolean }[];
+}
+
+/**
+ * The record's colour texture. With the record model: its own texture (grooves, rim, sheen live in
+ * its maps), with our label laid over each of its labels. Without it: a drawn black disc.
+ */
+export function vinylCanvas(e: ShelfEntry, S: number, skin?: RecordSkin) {
   const c = canvas(S);
   const x = c.getContext('2d')!;
+  if (skin) {
+    x.drawImage(skin.image, 0, 0, S, S);
+    for (const l of skin.labels) drawLabel(x, e, l.u * S, l.v * S, l.r * S, l.rot, l.mirror);
+    return c;
+  }
   const u = S / 1024, m = S / 2;
   x.fillStyle = '#0e0d10';
   x.fillRect(0, 0, S, S);
@@ -258,21 +277,42 @@ export function vinylCanvas(e: ShelfEntry, S: number) {
     x.arc(m, m, r * u, 0, Math.PI * 2);
     x.stroke();
   }
-  // the label takes the bottle's colour (§3: "Цвет винила или яблока в центре — из палитры аромата")
-  x.fillStyle = mix(e.bottle.palette[0], '#000000', 0.1);
+  drawLabel(x, e, m, m, 170 * u, 0, false);
+  return c;
+}
+
+/**
+ * The label ("яблоко"): the bottle's colour (§3: "Цвет винила или яблока в центре — из палитры
+ * аромата"), the artist in mono capitals above the hole, the title in Prata below it.
+ */
+function drawLabel(
+  x: CanvasRenderingContext2D,
+  e: ShelfEntry,
+  cx: number,
+  cy: number,
+  R: number,
+  rot: number,
+  mirror: boolean,
+) {
+  x.save();
+  x.translate(cx, cy);
+  x.rotate(rot);
+  if (mirror) x.scale(-1, 1);
   x.beginPath();
-  x.arc(m, m, 170 * u, 0, Math.PI * 2);
-  x.fill();
+  x.arc(0, 0, R, 0, Math.PI * 2);
+  x.clip();
+  x.fillStyle = mix(e.bottle.palette[0], '#000000', 0.1);
+  x.fillRect(-R, -R, 2 * R, 2 * R);
   const t = e.current?.track;
   x.fillStyle = 'rgba(251,251,250,.92)';
   x.textAlign = 'center';
-  x.font = `500 ${20 * u}px ${MONO}`;
-  x.fillText((t?.artist ?? '').toUpperCase(), m, 452 * u, 280 * u);
-  x.font = `${30 * u}px ${SERIF}`;
-  x.fillText(t?.title ?? '', m, 600 * u, 290 * u);
+  x.font = `500 ${0.118 * R}px ${MONO}`;
+  x.fillText((t?.artist ?? '').toUpperCase(), 0, -0.353 * R, 1.65 * R);
+  x.font = `${0.176 * R}px ${SERIF}`;
+  x.fillText(t?.title ?? '', 0, 0.518 * R, 1.7 * R);
   x.fillStyle = '#0e0d10';
   x.beginPath();
-  x.arc(m, m, 14 * u, 0, Math.PI * 2);
+  x.arc(0, 0, 0.082 * R, 0, Math.PI * 2);
   x.fill();
-  return c;
+  x.restore();
 }

@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import type { ShelfEntry } from '../data/model';
 import { loadShelfModel, type ShelfModel } from './model';
+import { loadRecordModel, type RecordModel } from './record';
 import { createWaterVeil } from './water';
 import { backCanvas, frontCanvas, KRAFT, rng, stickerCanvas, vinylCanvas, type SleeveImages } from './textures';
 
@@ -57,15 +58,27 @@ const FLOAT = { yaw: 4, pitch: 2.5, roll: 1.2, bob: 0.015, ease: 1.2 };
  */
 const PULL = { edge: 0, travel: 0.6, snap: 0.33 };
 
-/** A deleted sleeve falls out of the hand: seconds to leave the screen, and how much it tumbles (rad/s). */
-const DROP = { seconds: 0.7, tumble: 0.9 };
+/**
+ * A deleted sleeve falls out of the hand: seconds to leave the screen, and how much it tumbles
+ * (rad/s). It falls against the water; once it is gone the water fades as usual and the shelf
+ * develops out of blur (design system: blur-reveal, duration-reveal, ease-develop).
+ */
+const DROP = { seconds: 1.1, tumble: 0.7 };
 
-/** How far a hovered sleeve rises, as a share of its height. */
-const HOVER_LIFT = 0.5;
+/**
+ * How far a hovered sleeve rises, as a share of its height: `front` for the one nearest the viewer,
+ * `back` for the furthest one standing in its module, in between for the rest. The front one barely
+ * moves, so it does not slip from under the pointer onto the sleeve behind it.
+ */
+const HOVER_LIFT = { front: 0.1, back: 0.5 };
 
 /** The studio the bake was lit with; the sleeves get the same light. */
 const ENV_URL = '/env/wooden_studio_08_1k.hdr';
 const MODEL_URL = '/models/shelf.glb';
+/** "12" Vinyl Record" by AleixoAlonso, CC BY 4.0 (credited on the page and in README). */
+const RECORD_URL = '/models/vinyl/scene.gltf';
+/** Radius of the record in sleeve units (the sleeve spans ±1). */
+const RECORD_R = 0.94;
 
 export interface ShelfItem {
   entry: ShelfEntry;
@@ -78,11 +91,13 @@ interface Item extends ShelfItem {
   back: THREE.MeshStandardMaterial;
   sticker: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshPhysicalMaterial> | null;
   vinyl: THREE.Mesh | null;
-  vinylMat: THREE.MeshPhysicalMaterial | null;
+  vinylMat: THREE.MeshStandardMaterial | null;
   home: { pos: THREE.Vector3; quat: THREE.Quaternion };
   /** Every lit material of the sleeve, for the held-light boost. */
   mats: THREE.MeshStandardMaterial[];
   hover: number;
+  /** How far it rises when hovered, as a share of its height (set by its place: see HOVER_LIFT). */
+  lift: number;
   /** 0 on the shelf, 1 in hand: how much of HELD_LIGHT it gets. */
   glow: number;
   /** Has reached the hand since it was picked. */
@@ -107,10 +122,12 @@ export interface ShelfCallbacks {
 
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-function tex(c: HTMLCanvasElement) {
+/** `flipY: false` for textures on glTF models, whose UVs read images top down. */
+function tex(c: HTMLCanvasElement, flipY = true) {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
+  t.flipY = flipY;
   return t;
 }
 
@@ -121,6 +138,7 @@ export class Shelf {
   private cam = new THREE.PerspectiveCamera(VIEW.fov, 1, 0.05, 100);
   private items: Item[] = [];
   private model: ShelfModel | null = null;
+  private record: RecordModel | null = null;
   private modules = new THREE.Group();
   /** Backdrop behind the sleeve in hand: moving water (shelf/water.ts). */
   private veil = createWaterVeil();
@@ -192,7 +210,13 @@ export class Shelf {
 
   private async load() {
     try {
-      const [model, env] = await Promise.all([loadShelfModel(MODEL_URL), new RGBELoader().loadAsync(ENV_URL)]);
+      const [model, env, record] = await Promise.all([
+        loadShelfModel(MODEL_URL),
+        new RGBELoader().loadAsync(ENV_URL),
+        // without the record model the shelf still works, with drawn records
+        loadRecordModel(RECORD_URL).catch((e) => (console.error(e), null)),
+      ]);
+      this.record = record;
       const pmrem = new THREE.PMREMGenerator(this.renderer);
       env.mapping = THREE.EquirectangularReflectionMapping;
       this.scene.environment = pmrem.fromEquirectangular(env).texture;
@@ -201,6 +225,8 @@ export class Shelf {
       this.model = model;
       this.k = model.slots[0].size / SIZE;
       this.scene.background = model.wallColor;
+      // sleeves built before the record model arrived get rebuilt with it
+      if (record && this.items.length) this.setItems(this.items.map(({ entry, images }) => ({ entry, images })));
       this.layout();
       this.snapHome();
       this.warmUp();
@@ -268,6 +294,25 @@ export class Shelf {
     });
   }
   private dropping: { it: Item; v: number; fallen: number; resolve: () => void } | null = null;
+
+  /** The shelf develops out of blur, like a photo in the tray (after a deletion). */
+  private develop() {
+    if (this.reduce.matches) return;
+    const cv = this.canvas;
+    cv.style.transition = 'none';
+    cv.style.filter = `blur(${css('--blur-reveal') || '12px'})`;
+    void cv.offsetWidth; // apply the blur before the transition starts
+    cv.style.transition = 'filter var(--duration-reveal) var(--ease-develop)';
+    cv.style.filter = 'blur(0px)';
+    cv.addEventListener(
+      'transitionend',
+      () => {
+        cv.style.filter = '';
+        cv.style.transition = '';
+      },
+      { once: true },
+    );
+  }
 
   /**
    * Compiles every shader now, while nothing moves. A material drawn for the first time compiles
@@ -360,10 +405,19 @@ export class Shelf {
     }
 
     let vinyl: THREE.Mesh | null = null;
-    let vinylMat: THREE.MeshPhysicalMaterial | null = null;
-    if (e.current) {
+    let vinylMat: THREE.MeshStandardMaterial | null = null;
+    const rec = this.record;
+    if (e.current && rec) {
+      // the record model, its own maps, our label on its colour texture
+      vinylMat = rec.material.clone();
+      vinylMat.map = tex(vinylCanvas(e, LOW, rec.skin), false);
+      vinyl = new THREE.Mesh(rec.geometry, vinylMat);
+      vinyl.scale.setScalar(RECORD_R / rec.radius);
+      vinyl.userData.sharedGeometry = true;
+      g.add(vinyl);
+    } else if (e.current) {
       vinylMat = new THREE.MeshPhysicalMaterial({ map: tex(vinylCanvas(e, LOW)), roughness: 0.32, clearcoat: 0.7, clearcoatRoughness: 0.2 });
-      const vg = new THREE.CylinderGeometry(0.94, 0.94, 0.012, 96);
+      const vg = new THREE.CylinderGeometry(RECORD_R, RECORD_R, 0.012, 96);
       vg.rotateX(Math.PI / 2);
       vinyl = new THREE.Mesh(vg, [new THREE.MeshStandardMaterial({ color: '#0e0d10', roughness: 0.4 }), vinylMat, vinylMat]);
       g.add(vinyl);
@@ -387,6 +441,7 @@ export class Shelf {
       home: { pos: new THREE.Vector3(), quat: new THREE.Quaternion() },
       mats,
       hover: 0,
+      lift: HOVER_LIFT.back,
       glow: 0,
       inHand: false,
       onTop: false,
@@ -416,10 +471,10 @@ export class Shelf {
     let canvas: HTMLCanvasElement | null = null;
     if (part === 'front') (mat = it.front), (canvas = frontCanvas(it.entry, it.images, size));
     else if (part === 'back') (mat = it.back), (canvas = backCanvas(it.entry, size));
-    else if (part === 'vinyl' && it.vinylMat) (mat = it.vinylMat), (canvas = vinylCanvas(it.entry, size));
+    else if (part === 'vinyl' && it.vinylMat) (mat = it.vinylMat), (canvas = vinylCanvas(it.entry, size, this.record?.skin));
     else if (part === 'sticker' && it.sticker) (mat = it.sticker.material), (canvas = stickerCanvas(it.entry, it.images, size)?.canvas ?? null);
     if (!mat || !canvas) return;
-    const t = tex(canvas);
+    const t = tex(canvas, !(part === 'vinyl' && this.record));
     // upload before it is shown, so the swap itself costs nothing to draw
     this.renderer.initTexture(t);
     const old = mat.map;
@@ -431,7 +486,8 @@ export class Shelf {
     this.scene.remove(it.group);
     it.group.traverse((o) => {
       if (!(o instanceof THREE.Mesh)) return;
-      o.geometry.dispose();
+      // the record model's geometry is shared by every sleeve; its maps belong to the model too
+      if (!o.userData.sharedGeometry) o.geometry.dispose();
       for (const m of [o.material].flat() as THREE.MeshStandardMaterial[]) {
         m.map?.dispose();
         m.dispose();
@@ -468,10 +524,15 @@ export class Shelf {
 
     this.items.forEach((it, i) => {
       const slot = m.slots[i % per];
-      const offset = m.along.clone().multiplyScalar(m.width * Math.floor(i / per));
+      const module = Math.floor(i / per);
+      const offset = m.along.clone().multiplyScalar(m.width * module);
       it.home.pos.copy(slot.pos).add(offset);
       it.home.quat.copy(slot.quat);
       it.group.scale.setScalar(this.k);
+      // places are numbered from the viewer back: the further back, the higher it rises
+      const standing = Math.min(per, this.items.length - module * per);
+      const depth = standing > 1 ? (i % per) / (standing - 1) : 0;
+      it.lift = HOVER_LIFT.front + (HOVER_LIFT.back - HOVER_LIFT.front) * depth;
     });
 
     // camera: between the sleeves' faces and the wall, a little from above
@@ -611,10 +672,10 @@ export class Shelf {
         const target = s.hover === i && s.picked < 0 ? 1 : 0;
         it.hover += (target - it.hover) * k;
         if (Math.abs(target - it.hover) > 1e-3) moving = true;
-        // a hovered sleeve rises straight up out of the row, by HOVER_LIFT of its height, so it
+        // a hovered sleeve rises straight up out of the row (by it.lift of its height), so it
         // never passes through the sleeve standing in front of it
         this.tp.copy(it.home.pos);
-        this.tp.y += it.hover * HOVER_LIFT * SIZE * this.k;
+        this.tp.y += it.hover * it.lift * SIZE * this.k;
         this.tq.copy(it.home.quat);
       }
       if (it.group.position.distanceToSquared(this.tp) > 1e-8 || it.group.quaternion.angleTo(this.tq) > 1e-4) moving = true;
@@ -686,6 +747,7 @@ export class Shelf {
       if (d.fallen > fall) {
         d.it.group.visible = false;
         this.dropping = null;
+        this.develop();
         d.resolve();
       }
     }
@@ -693,7 +755,8 @@ export class Shelf {
     const veil = this.veil;
     veil.mesh.position.copy(this.cam.position).addScaledVector(this.camFwd, this.pickD + SIZE * this.k);
     veil.mesh.quaternion.copy(this.cam.quaternion);
-    const veilTarget = s.picked >= 0 ? 1 : 0;
+    // the water stays while a deleted sleeve is still falling
+    const veilTarget = s.picked >= 0 || this.dropping ? 1 : 0;
     veil.opacity += (veilTarget - veil.opacity) * k;
     if (Math.abs(veilTarget - veil.opacity) > 1e-3) moving = true;
     else veil.opacity = veilTarget;

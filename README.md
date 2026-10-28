@@ -27,6 +27,11 @@ npm run dev
 - `src/styles/tokens.css`, `components.css` — копии из дизайн-системы. При изменении системы их нужно обновить.
 - `server/api.ts` — разбор ссылок (og-теги, oEmbed Spotify/YouTube/SoundCloud, прокси картинок). В разработке работает внутри Vite, в продакшене это Cloudflare Worker (`worker/`, `wrangler.toml`).
 
+## Чужие материалы
+
+- **Пластинка** — «12" Vinyl Record» (https://skfb.ly/6USuP) by AleixoAlonso (https://sketchfab.com/AleixoAlonso), лицензия Creative Commons Attribution 4.0 (http://creativecommons.org/licenses/by/4.0/). Изменено: текстуры уменьшены до 1024 px, на месте исходных яблок рисуется своё. Файлы и исходная лицензия — `public/models/vinyl/`. Указание автора есть и на странице, внизу справа.
+- **Студия для освещения** — wooden_studio_08 (Poly Haven, CC0), уменьшена до 1K.
+
 ## Известные ограничения
 
 - Fragrantica и Золотое Яблоко не пускают серверные запросы (защита от ботов). Тогда бренд и название угадываются по адресу ссылки, фото добавляется вручную: перетащить или вставить скриншот.

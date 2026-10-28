@@ -1,7 +1,7 @@
 // Everything lives in the browser (IndexedDB) for the MVP. The functions below are the only way
 // the app touches storage, so a server-backed version can replace this file without the UI noticing.
 import { openDB, type DBSchema } from 'idb';
-import { lastChange, newId, today, type Bottle, type Pairing, type ShelfEntry, type Track } from './model';
+import { lastChange, newId, now, type Bottle, type Pairing, type ShelfEntry, type Track } from './model';
 
 interface Schema extends DBSchema {
   bottles: { key: string; value: Bottle };
@@ -54,7 +54,7 @@ export async function findBottle(brand: string, name: string): Promise<Bottle | 
 }
 
 export async function addBottle(bottle: Omit<Bottle, 'id' | 'addedAt'>): Promise<Bottle> {
-  const b: Bottle = { ...bottle, id: newId(), addedAt: today() };
+  const b: Bottle = { ...bottle, id: newId(), addedAt: now() };
   await (await db).put('bottles', b);
   return b;
 }
