@@ -37,6 +37,9 @@ const HELD_LIGHT = {
   env: 1.8,
 };
 
+/** How far a hovered sleeve rises, as a share of its height. */
+const HOVER_LIFT = 0.5;
+
 /** The studio the bake was lit with; the sleeves get the same light. */
 const ENV_URL = '/env/wooden_studio_08_1k.hdr';
 const MODEL_URL = '/models/shelf.glb';
@@ -53,7 +56,7 @@ interface Item extends ShelfItem {
   sticker: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshPhysicalMaterial> | null;
   vinyl: THREE.Mesh | null;
   vinylMat: THREE.MeshPhysicalMaterial | null;
-  home: { pos: THREE.Vector3; quat: THREE.Quaternion; normal: THREE.Vector3 };
+  home: { pos: THREE.Vector3; quat: THREE.Quaternion };
   /** Every lit material of the sleeve, for the held-light boost. */
   mats: THREE.MeshStandardMaterial[];
   hover: number;
@@ -118,18 +121,12 @@ export class Shelf {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.canvas = this.renderer.domElement;
     host.prepend(this.canvas);
 
-    // Soft key light from the studio ceiling: it only casts the sleeves' shadows on the baked surfaces.
+    // Soft key light from the studio ceiling on the sleeves. Sleeves cast no shadows: the shelf's
+    // shadow is baked, and a live one would never match it.
     const sun = this.sun;
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
-    sun.shadow.radius = 8;
-    sun.shadow.bias = -0.0005;
-    sun.shadow.normalBias = 0.01;
     this.scene.add(sun, sun.target, this.fill, this.fill.target, this.modules, this.dim);
     this.dim.renderOrder = 1;
 
@@ -246,7 +243,6 @@ export class Shelf {
     const front = new THREE.MeshStandardMaterial({ map: tex(frontCanvas(e, d.images, LOW)), roughness: 0.78 });
     const back = new THREE.MeshStandardMaterial({ map: tex(backCanvas(e, LOW)), roughness: 0.85 });
     const sleeve = new THREE.Mesh(new THREE.BoxGeometry(SIZE, SIZE, 0.045), [edge, edge, edge, edge, front, back]);
-    sleeve.castShadow = true;
     g.add(sleeve);
 
     // no photo of the bottle: the cover stays clean
@@ -277,7 +273,6 @@ export class Shelf {
       const vg = new THREE.CylinderGeometry(0.94, 0.94, 0.012, 96);
       vg.rotateX(Math.PI / 2);
       vinyl = new THREE.Mesh(vg, [new THREE.MeshStandardMaterial({ color: '#0e0d10', roughness: 0.4 }), vinylMat, vinylMat]);
-      vinyl.castShadow = true;
       g.add(vinyl);
     }
 
@@ -296,7 +291,7 @@ export class Shelf {
       sticker,
       vinyl,
       vinylMat,
-      home: { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), normal: new THREE.Vector3(0, 0, 1) },
+      home: { pos: new THREE.Vector3(), quat: new THREE.Quaternion() },
       mats,
       hover: 0,
       glow: 0,
@@ -380,13 +375,13 @@ export class Shelf {
       const offset = m.along.clone().multiplyScalar(m.width * Math.floor(i / per));
       it.home.pos.copy(slot.pos).add(offset);
       it.home.quat.copy(slot.quat);
-      it.home.normal.copy(slot.normal);
       it.group.scale.setScalar(this.k);
     });
 
     // camera: between the sleeves' faces and the wall, a little from above
-    const normal = m.slots[0].normal;
-    const flat = normal.clone().lerp(m.wallNormal, VIEW.towardWall).normalize();
+    // the average way the places face: they may fan out along the shelf
+    const normal = m.slots.reduce((sum, s) => sum.add(s.normal), new THREE.Vector3()).normalize();
+    const flat = normal.lerp(m.wallNormal, VIEW.towardWall).normalize();
     const pitch = THREE.MathUtils.degToRad(VIEW.pitch);
     this.dir.copy(flat).multiplyScalar(Math.cos(pitch)).setY(Math.sin(pitch)).normalize();
     const slotTop = Math.max(...m.slots.map((s) => s.pos.y + s.size / 2));
@@ -407,11 +402,6 @@ export class Shelf {
     // the sleeve in hand fills ~70% of the short side, with room for the record pulled out
     const S = SIZE * this.k;
     this.pickD = Math.max((S + 1.3 * this.k) / 0.86 / t / this.cam.aspect, S / 0.62 / t);
-
-    // shadows only around the sleeves of the module in view
-    const sc = this.sun.shadow.camera;
-    Object.assign(sc, { left: -contentW, right: contentW, top: contentW, bottom: -contentW, near: 0.1, far: 12 });
-    sc.updateProjectionMatrix();
     this.invalidate();
   }
 
@@ -476,9 +466,10 @@ export class Shelf {
         const target = s.hover === i && s.picked < 0 ? 1 : 0;
         it.hover += (target - it.hover) * k;
         if (Math.abs(target - it.hover) > 1e-3) moving = true;
-        // a hovered sleeve rises a little out of the row, toward the viewer
-        this.tp.copy(it.home.pos).addScaledVector(it.home.normal, it.hover * 0.35 * this.k);
-        this.tp.y += it.hover * 0.12 * this.k;
+        // a hovered sleeve rises straight up out of the row, by HOVER_LIFT of its height, so it
+        // never passes through the sleeve standing in front of it
+        this.tp.copy(it.home.pos);
+        this.tp.y += it.hover * HOVER_LIFT * SIZE * this.k;
         this.tq.copy(it.home.quat);
       }
       if (it.group.position.distanceToSquared(this.tp) > 1e-8 || it.group.quaternion.angleTo(this.tq) > 1e-4) moving = true;

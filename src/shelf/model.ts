@@ -15,9 +15,9 @@ export interface Slot {
 }
 
 export interface ShelfModel {
-  /** Wall, shelf and their shadow catchers. Cloned for every extra module. */
+  /** Wall and shelf. Cloned for every extra module. */
   root: THREE.Group;
-  /** Front-most first. */
+  /** In the order the file numbers them (front-most first when it does not). */
   slots: Slot[];
   /** Horizontal direction along the wall, and the module width along it. */
   along: THREE.Vector3;
@@ -73,22 +73,23 @@ export async function loadShelfModel(url: string): Promise<ShelfModel> {
   const wallSize = wallBox.getSize(new THREE.Vector3());
   const width = Math.abs(wallSize.dot(along));
 
-  // Baked light lives in the textures: show them as they are, unlit, and let sleeves cast soft
-  // shadows onto an invisible copy of the same surfaces.
+  // Baked light lives in the textures: show them as they are, unlit. Sleeves cast no shadows
+  // (the user's call): the baked shadow of the shelf is the only one.
   for (const m of meshes) {
     const old = m.material as THREE.MeshStandardMaterial;
     m.material = new THREE.MeshBasicMaterial({ map: old.map, side: old.side, toneMapped: false });
     old.dispose();
-    const catcher = new THREE.Mesh(
-      m.geometry,
-      new THREE.ShadowMaterial({ opacity: 0.35, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
-    );
-    catcher.receiveShadow = true;
-    catcher.userData.catcher = true;
-    m.add(catcher);
   }
 
   // Empties: the thin axis is the sleeve's thickness, the other two its size (a cube empty spans ±1).
+  // Order: by the number in the empties' names (sleeve01, sleeve02, …), the newest bottle on the
+  // first; without numbers, the place nearest the viewer comes first.
+  const numberOf = (name: string) => {
+    const m = /(\d+)\D*$/.exec(name);
+    return m ? Number(m[1]) : NaN;
+  };
+  const numbered = empties.every((e) => !Number.isNaN(numberOf(e.name)));
+  if (numbered) empties.sort((a, b) => numberOf(a.name) - numberOf(b.name));
   const slots: Slot[] = empties.map((e) => {
     const ax = new THREE.Vector3(), ay = new THREE.Vector3(), az = new THREE.Vector3();
     e.matrixWorld.extractBasis(ax, ay, az);
@@ -102,8 +103,7 @@ export async function loadShelfModel(url: string): Promise<ShelfModel> {
     return { pos: new THREE.Vector3().setFromMatrixPosition(e.matrixWorld), quat, normal, size };
   });
   if (!slots.length) throw new Error('shelf.glb: no empties to stand sleeves on');
-  // the first sleeve goes to the place nearest the viewer
-  slots.sort((a, b) => b.pos.dot(a.normal) - a.pos.dot(a.normal));
+  if (!numbered) slots.sort((a, b) => b.pos.dot(a.normal) - a.pos.dot(a.normal));
 
   const root = new THREE.Group();
   for (const m of meshes) root.attach(m);
