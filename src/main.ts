@@ -30,7 +30,7 @@ await Promise.race([
 
 // ---------- the shelf ----------
 try {
-  shelf = new Shelf($('stage'), { onPick: showHeld, onPutBack: hideHeld });
+  shelf = new Shelf($('stage'), { onPick: showHeld, onPutBack: hideHeld, onChange: syncActions });
 } catch {
   $('stage').append(h('p', { class: 'fail ui' }, 'Этот браузер не смог запустить 3D. Открой страницу в свежем Chrome, Safari или Firefox.'));
 }

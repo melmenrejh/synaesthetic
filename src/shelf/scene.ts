@@ -14,6 +14,8 @@ import { backCanvas, frontCanvas, KRAFT, rng, stickerCanvas, vinylCanvas, type S
 const SIZE = 2;
 const LOW = 512;
 const HIGH = 1024;
+/** Layer of the front pass: the sleeve in hand and the water behind it. */
+const FRONT = 1;
 
 /** How the camera looks at the shelf. Tuned by eye; change freely. */
 const VIEW = {
@@ -22,8 +24,10 @@ const VIEW = {
   /** Degrees above the shelf. */
   pitch: 8,
   fov: 32,
-  /** Share of the screen the shelf and its sleeves take. */
+  /** At most this share of the screen's width goes to the shelf (what limits a narrow window)… */
   fill: 0.72,
+  /** …and at most this share of its height (what limits a wide one). */
+  fillHeight: 0.33,
 };
 
 /**
@@ -37,6 +41,21 @@ const HELD_LIGHT = {
   /** Studio light on the sleeve in hand, as a multiple of the shelf's. */
   env: 1.8,
 };
+
+/**
+ * The sleeve in hand floats as if weightless: it sways slowly around three axes and bobs a little.
+ * Angles in degrees, bob as a share of the sleeve's height; each sway has its own period (7–13 s,
+ * set in `step`). `ease`: how fast the float comes in and rests (per second).
+ */
+const FLOAT = { yaw: 4, pitch: 2.5, roll: 1.2, bob: 0.015, ease: 1.2 };
+
+/**
+ * Pulling the record out by hand. `edge`: the right part of the sleeve that starts the gesture
+ * (0 = middle, 1 = edge; 0 gives the whole right half). `travel`: how far the hand moves for the full
+ * way, as a share of the sleeve's width on screen. `snap`: let go past this share of the way and
+ * it completes, short of it it goes back.
+ */
+const PULL = { edge: 0, travel: 0.6, snap: 0.33 };
 
 /** How far a hovered sleeve rises, as a share of its height. */
 const HOVER_LIFT = 0.5;
@@ -65,6 +84,8 @@ interface Item extends ShelfItem {
   glow: number;
   /** Has reached the hand since it was picked. */
   inHand: boolean;
+  /** Drawn in the front pass, over the shelf: while in hand and on its way back. */
+  onTop: boolean;
   /** Texture size it should have, and the parts still drawn at the other size. */
   want: number;
   pending: Part[];
@@ -75,6 +96,8 @@ type Part = 'front' | 'back' | 'sticker' | 'vinyl';
 export interface ShelfCallbacks {
   onPick(entry: ShelfEntry): void;
   onPutBack(): void;
+  /** The record went in or out by hand (the pull gesture), not through `toggleRecord`. */
+  onChange?(): void;
   /** The model could not be loaded. */
   onError?(e: unknown): void;
 }
@@ -100,7 +123,21 @@ export class Shelf {
   private veil = createWaterVeil();
   private sun = new THREE.DirectionalLight(0xffffff, 1.2);
   private fill = new THREE.DirectionalLight(0xffffff, 0);
-  private s = { picked: -1, flipped: false, open: false, rotX: 0, rotY: 0, hover: -1, dragging: false };
+  private s = {
+    picked: -1,
+    flipped: false,
+    open: false,
+    rotX: 0,
+    rotY: 0,
+    hover: -1,
+    dragging: false,
+    /** The record being pulled by hand: openness when the gesture began, now, and where it began. */
+    pull: null as null | { from: number; amt: number; x0: number },
+  };
+  /** How far the record of the sleeve in hand is out, 0..1, eased toward its target. */
+  private openNow = 0;
+  /** Width of the sleeve in hand on screen, in CSS pixels: the scale of the pull gesture. */
+  private sleevePx = 300;
   /** Sleeve scale: the model's place size over SIZE. */
   private k = 0.4;
   private target = new THREE.Vector3();
@@ -129,13 +166,25 @@ export class Shelf {
     // shadow is baked, and a live one would never match it.
     const sun = this.sun;
     this.scene.add(sun, sun.target, this.fill, this.fill.target, this.modules, this.veil.mesh);
-    this.veil.mesh.renderOrder = 1;
+    // lights shine on both passes; the water lives in the front one with the sleeve in hand
+    sun.layers.enableAll();
+    this.fill.layers.enableAll();
+    this.veil.mesh.layers.set(FRONT);
+    this.ray.layers.enableAll();
 
     this.applyTheme();
     this.bindInput();
     new ResizeObserver(() => this.resize()).observe(host);
     this.reduce.addEventListener('change', () => this.invalidate());
-    void this.load();  }
+    void this.load();
+  }
+
+  /** Moves a sleeve into the front pass (over everything) or back into the shelf's. */
+  private setFront(it: Item, on: boolean) {
+    if (it.onTop === on) return;
+    it.onTop = on;
+    it.group.traverse((o) => o.layers.set(on ? FRONT : 0));
+  }
 
   private async load() {
     try {
@@ -172,7 +221,10 @@ export class Shelf {
     for (const it of this.items) this.disposeItem(it);
     this.items = list.map((d, i) => this.buildItem(d, i));
     this.s.picked = keep ? this.items.findIndex((it) => it.entry.bottle.id === keep) : -1;
-    if (this.s.picked >= 0) this.requestDetail(this.items[this.s.picked], HIGH);
+    if (this.s.picked >= 0) {
+      this.requestDetail(this.items[this.s.picked], HIGH);
+      this.setFront(this.items[this.s.picked], true);
+    }
     this.layout();
     this.snapHome();
     if (this.model) this.warmUp();
@@ -185,7 +237,10 @@ export class Shelf {
    */
   private warmUp() {
     this.step(0);
+    // both passes, so the water's shader is ready too
+    this.cam.layers.enableAll();
     void this.renderer.compileAsync(this.scene, this.cam).then(() => this.invalidate());
+    this.cam.layers.set(0);
   }
 
   /** Fresh meshes start where they live, not in the middle of the scene. */
@@ -207,8 +262,10 @@ export class Shelf {
   pick(i: number) {
     if (i < 0 || i >= this.items.length) return;
     if (this.s.picked >= 0 && this.s.picked !== i) this.requestDetail(this.items[this.s.picked], LOW);
-    Object.assign(this.s, { picked: i, flipped: false, open: false, rotX: 0, rotY: 0, hover: -1 });
+    Object.assign(this.s, { picked: i, flipped: false, open: false, rotX: 0, rotY: 0, hover: -1, pull: null });
+    this.openNow = 0;
     this.requestDetail(this.items[i], HIGH);
+    this.setFront(this.items[i], true);
     this.cb.onPick(this.items[i].entry);
     this.invalidate();
   }
@@ -216,7 +273,8 @@ export class Shelf {
   putBack() {
     if (this.s.picked < 0) return;
     this.requestDetail(this.items[this.s.picked], LOW);
-    Object.assign(this.s, { picked: -1, open: false, flipped: false, rotX: 0, rotY: 0 });
+    Object.assign(this.s, { picked: -1, open: false, flipped: false, rotX: 0, rotY: 0, pull: null });
+    this.canvas.style.cursor = 'default';
     this.cb.onPutBack();
     this.invalidate();
   }
@@ -298,6 +356,7 @@ export class Shelf {
       hover: 0,
       glow: 0,
       inHand: false,
+      onTop: false,
       want: LOW,
       pending: [],
     };
@@ -398,7 +457,7 @@ export class Shelf {
     const contentW = Math.max(size.x, size.z);
     const contentH = slotTop - box.min.y;
     const t = 2 * Math.tan(THREE.MathUtils.degToRad(this.cam.fov / 2));
-    this.dist = Math.max(contentW / VIEW.fill / (t * this.cam.aspect), contentH / VIEW.fill / t);
+    this.dist = Math.max(contentW / VIEW.fill / (t * this.cam.aspect), contentH / VIEW.fillHeight / t);
     this.visibleW = this.dist * t * this.cam.aspect;
     this.panMax = (count - 1) * m.width;
     this.pan = THREE.MathUtils.clamp(this.pan, 0, this.panMax);
@@ -406,6 +465,7 @@ export class Shelf {
     // the sleeve in hand fills ~70% of the short side, with room for the record pulled out
     const S = SIZE * this.k;
     this.pickD = Math.max((S + 1.3 * this.k) / 0.86 / t / this.cam.aspect, S / 0.62 / t);
+    this.sleevePx = (S / (this.pickD * t)) * this.host.clientHeight;
     this.invalidate();
   }
 
@@ -427,7 +487,19 @@ export class Shelf {
     this.raf = 0;
     const dt = this.last ? Math.min((now - this.last) / 1000, 0.05) : 1 / 60;
     const moving = this.step(dt);
-    this.renderer.render(this.scene, this.cam);
+    // Two passes: the shelf, then — over it, with depth cleared — the water and the sleeve in hand,
+    // so nothing on the shelf can cut into them however close the camera stands.
+    const r = this.renderer;
+    this.cam.layers.set(0);
+    r.render(this.scene, this.cam);
+    if (this.veil.opacity > 0 || this.items.some((it) => it.onTop)) {
+      r.autoClear = false;
+      r.clearDepth();
+      this.cam.layers.set(FRONT);
+      r.render(this.scene, this.cam);
+      this.cam.layers.set(0);
+      r.autoClear = true;
+    }
     this.last = moving ? now : 0;
     if (moving) this.invalidate();
   };
@@ -437,6 +509,11 @@ export class Shelf {
   private eu = new THREE.Euler();
   private camRight = new THREE.Vector3();
   private camFwd = new THREE.Vector3();
+  private camUp = new THREE.Vector3();
+  private q1 = new THREE.Quaternion();
+  /** 0..1: how much of FLOAT the sleeve in hand shows, and its clock in seconds. */
+  private floatAmt = 0;
+  private floatT = 0;
 
   /** Moves everything one step toward where it should be; true while anything is still moving. */
   private step(dt: number): boolean {
@@ -457,15 +534,43 @@ export class Shelf {
     this.sun.target.position.copy(look);
     if (m) this.sun.position.copy(look).addScaledVector(m.wallNormal, 2).add(new THREE.Vector3(0, 4, 0)).addScaledVector(m.along, -1);
 
+    // the float of the sleeve in hand: comes in once it has arrived, rests while it is being turned
+    this.camUp.setFromMatrixColumn(this.cam.matrixWorld, 1);
+    const heldNow = s.picked >= 0 ? this.items[s.picked] : null;
+    const floatTarget = heldNow?.inHand && !s.dragging && !s.pull && !reduce ? 1 : 0;
+
+    // the record: follows the hand while pulled, eases to in or out otherwise
+    const openTarget = s.pull ? s.pull.amt : s.open ? 1 : 0;
+    this.openNow += (openTarget - this.openNow) * (s.pull ? 1 - Math.exp(-dt * 30) : kv);
+    if (Math.abs(openTarget - this.openNow) > 1e-3) moving = true;
+    else this.openNow = openTarget;
+    this.floatAmt += (floatTarget - this.floatAmt) * (1 - Math.exp(-dt * FLOAT.ease));
+    if (this.floatAmt > 1e-3 || floatTarget) {
+      this.floatT += dt;
+      moving = true;
+    } else this.floatAmt = 0;
+
     let heldArrived = false;
     let swapped = false;
     this.items.forEach((it, i) => {
       const held = s.picked === i;
       if (held) {
         this.tp.copy(this.cam.position).addScaledVector(this.camFwd, this.pickD);
-        if (s.open && it.vinyl) this.tp.addScaledVector(this.camRight, -0.6 * this.k);
+        if (it.vinyl) this.tp.addScaledVector(this.camRight, -0.6 * this.k * this.openNow);
         this.eu.set(s.rotX, s.rotY + (s.flipped ? Math.PI : 0), 0);
-        this.tq.copy(this.cam.quaternion).multiply(new THREE.Quaternion().setFromEuler(this.eu));
+        this.tq.copy(this.cam.quaternion).multiply(this.q1.setFromEuler(this.eu));
+        const f = this.floatAmt;
+        if (f > 0) {
+          // three slow sways with periods that never line up, so it does not look like a loop
+          const t = this.floatT * Math.PI * 2, deg = THREE.MathUtils.degToRad;
+          this.eu.set(
+            deg(FLOAT.pitch) * Math.sin(t / 13 + 1) * f,
+            deg(FLOAT.yaw) * Math.sin(t / 9) * f,
+            deg(FLOAT.roll) * Math.sin(t / 11 + 2) * f,
+          );
+          this.tq.multiply(this.q1.setFromEuler(this.eu));
+          this.tp.addScaledVector(this.camUp, FLOAT.bob * SIZE * this.k * Math.sin(t / 7 + 0.5) * f);
+        }
       } else {
         const target = s.hover === i && s.picked < 0 ? 1 : 0;
         it.hover += (target - it.hover) * k;
@@ -501,9 +606,12 @@ export class Shelf {
         }
         moving = true;
       }
+      // back in its place: it rejoins the shelf's pass, behind its neighbours again
+      if (it.onTop && !held && it.group.position.distanceTo(it.home.pos) < 0.02 * SIZE * this.k) this.setFront(it, false);
       if (it.vinyl) {
-        const out = held && s.open ? 1.15 : 0;
-        it.vinyl.position.x += (out - it.vinyl.position.x) * kv;
+        // in hand the record goes exactly as far as openNow says; elsewhere it slides back in
+        const out = held ? 1.15 * this.openNow : 0;
+        it.vinyl.position.x += (out - it.vinyl.position.x) * (held ? 1 : kv);
         if (Math.abs(out - it.vinyl.position.x) > 1e-3) moving = true;
         // the record turns while it is out: that is "playing"
         if (it.vinyl.position.x > 0.25 && !reduce) {
@@ -547,13 +655,31 @@ export class Shelf {
   private ndc = new THREE.Vector2();
 
   private hitAt(e: { clientX: number; clientY: number }): number {
+    return this.hit(e)?.index ?? -1;
+  }
+
+  /** The sleeve under the pointer and the point on it, in the sleeve's own units (±1 across). */
+  private hit(e: { clientX: number; clientY: number }): { index: number; local: THREE.Vector3 } | null {
     const r = this.canvas.getBoundingClientRect();
     this.ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     this.ray.setFromCamera(this.ndc, this.cam);
     const groups = this.s.picked >= 0 ? [this.items[this.s.picked].group] : this.items.map((it) => it.group);
-    let o: THREE.Object3D | null = this.ray.intersectObjects(groups, true)[0]?.object ?? null;
+    const h = this.ray.intersectObjects(groups, true)[0];
+    let o: THREE.Object3D | null = h?.object ?? null;
     while (o && o.userData.item === undefined) o = o.parent;
-    return o ? (o.userData.item as number) : -1;
+    if (!o || !h) return null;
+    return { index: o.userData.item as number, local: o.worldToLocal(h.point.clone()) };
+  }
+
+  /**
+   * Whether a press on the sleeve in hand starts the pull gesture: on its right part (PULL.edge),
+   * or on the record itself, which lies further right still. Pull left to bring the record out,
+   * right to put it back; the left part turns the sleeve either way. Only face up, with a record.
+   */
+  private startsPull(local: THREE.Vector3): boolean {
+    const it = this.items[this.s.picked];
+    if (!it?.vinyl || this.s.flipped) return false;
+    return local.x > PULL.edge * (SIZE / 2);
   }
 
   private bindInput() {
@@ -568,11 +694,23 @@ export class Shelf {
       last = { ...down };
       moved = false;
       cv.setPointerCapture(e.pointerId);
-      if (this.s.picked >= 0 && this.hitAt(e) === this.s.picked) this.s.dragging = true;
+      const h = this.s.picked >= 0 ? this.hit(e) : null;
+      if (h && h.index === this.s.picked) {
+        if (this.startsPull(h.local)) {
+          const from = this.s.open ? 1 : 0;
+          this.s.pull = { from, amt: from, x0: e.clientX };
+        } else this.s.dragging = true;
+      }
     });
     cv.addEventListener('pointermove', (e) => {
       if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) moved = true;
-      if (this.s.dragging) {
+      const pull = this.s.pull;
+      if (pull) {
+        // the sleeve follows the hand: pulling left brings the record out, right puts it back
+        const travel = Math.max(40, this.sleevePx * PULL.travel);
+        pull.amt = THREE.MathUtils.clamp(pull.from + (pull.x0 - e.clientX) / travel, 0, 1);
+        this.invalidate();
+      } else if (this.s.dragging) {
         this.s.rotY += (e.clientX - last.x) * 0.009;
         this.s.rotX = THREE.MathUtils.clamp(this.s.rotX + (e.clientY - last.y) * 0.009, -1.1, 1.1);
         this.invalidate();
@@ -586,12 +724,27 @@ export class Shelf {
           cv.style.cursor = h >= 0 ? 'pointer' : 'default';
           this.invalidate();
         }
+      } else if (!down && this.s.picked >= 0 && e.pointerType === 'mouse') {
+        // in hand: the edge that pulls shows a sideways cursor, the rest of the sleeve a grab
+        const h = this.hit(e);
+        cv.style.cursor = h?.index !== this.s.picked ? 'default' : this.startsPull(h.local) ? 'ew-resize' : 'grab';
       }
       last = { x: e.clientX, y: e.clientY };
     });
     cv.addEventListener('pointerup', (e) => {
       this.s.dragging = false;
       down = null;
+      const pull = this.s.pull;
+      if (pull) {
+        // let go: past PULL.snap of the way it completes, short of it it goes back
+        this.s.pull = null;
+        const open = pull.from === 0 ? pull.amt > PULL.snap : pull.amt > 1 - PULL.snap;
+        if (open !== this.s.open) {
+          this.s.open = open;
+          this.cb.onChange?.();
+        }
+        this.invalidate();
+      }
       if (moved) return;
       const h = this.hitAt(e);
       if (this.s.picked < 0) {
@@ -600,7 +753,9 @@ export class Shelf {
     });
     cv.addEventListener('pointercancel', () => {
       this.s.dragging = false;
+      this.s.pull = null;
       down = null;
+      this.invalidate();
     });
     cv.addEventListener('pointerleave', () => {
       if (this.s.picked < 0 && this.s.hover >= 0) {
