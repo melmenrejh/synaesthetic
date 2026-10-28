@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import type { ShelfEntry } from '../data/model';
 import { loadShelfModel, type ShelfModel } from './model';
+import { createWaterVeil } from './water';
 import { backCanvas, frontCanvas, KRAFT, rng, stickerCanvas, vinylCanvas, type SleeveImages } from './textures';
 
 /** Sleeve geometry is built at this size and scaled to the size of the places in the model. */
@@ -95,8 +96,8 @@ export class Shelf {
   private items: Item[] = [];
   private model: ShelfModel | null = null;
   private modules = new THREE.Group();
-  private dimMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
-  private dim = new THREE.Mesh(new THREE.PlaneGeometry(80, 60), this.dimMat);
+  /** Backdrop behind the sleeve in hand: moving water (shelf/water.ts). */
+  private veil = createWaterVeil();
   private sun = new THREE.DirectionalLight(0xffffff, 1.2);
   private fill = new THREE.DirectionalLight(0xffffff, 0);
   private s = { picked: -1, flipped: false, open: false, rotX: 0, rotY: 0, hover: -1, dragging: false };
@@ -127,8 +128,8 @@ export class Shelf {
     // Soft key light from the studio ceiling on the sleeves. Sleeves cast no shadows: the shelf's
     // shadow is baked, and a live one would never match it.
     const sun = this.sun;
-    this.scene.add(sun, sun.target, this.fill, this.fill.target, this.modules, this.dim);
-    this.dim.renderOrder = 1;
+    this.scene.add(sun, sun.target, this.fill, this.fill.target, this.modules, this.veil.mesh);
+    this.veil.mesh.renderOrder = 1;
 
     this.applyTheme();
     this.bindInput();
@@ -198,7 +199,8 @@ export class Shelf {
 
   applyTheme() {
     // The wall's light is baked, so only what lies over it follows the theme.
-    this.dimMat.color.set(css('--paper') || '#efeeec');
+    const night = document.documentElement.dataset.theme === 'dark';
+    this.veil.setTheme(css('--paper') || '#efeeec', css('--ink') || '#1f1e21', night);
     this.invalidate();
   }
 
@@ -351,6 +353,8 @@ export class Shelf {
     const w = this.host.clientWidth, h = this.host.clientHeight;
     if (!w || !h) return;
     this.renderer.setSize(w, h, false);
+    const px = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    this.veil.setResolution(px.x, px.y);
     this.cam.aspect = w / h;
     this.cam.updateProjectionMatrix();
     this.layout();
@@ -520,14 +524,20 @@ export class Shelf {
     this.fill.position.copy(this.cam.position).add(new THREE.Vector3(0, SIZE * this.k, 0));
     this.fill.target.position.copy(heldItem ? heldItem.group.position : look);
 
-    // the veil hangs just behind the sleeve in hand, facing the camera
-    this.dim.position.copy(this.cam.position).addScaledVector(this.camFwd, this.pickD + SIZE * this.k);
-    this.dim.quaternion.copy(this.cam.quaternion);
+    // the water hangs just behind the sleeve in hand, facing the camera
     // (always in the scene, never hidden: its shader is compiled up front, see warmUp)
-    const dimTarget = s.picked >= 0 ? 0.7 : 0;
-    this.dimMat.opacity += (dimTarget - this.dimMat.opacity) * k;
-    if (Math.abs(dimTarget - this.dimMat.opacity) > 1e-3) moving = true;
-    else this.dimMat.opacity = dimTarget;
+    const veil = this.veil;
+    veil.mesh.position.copy(this.cam.position).addScaledVector(this.camFwd, this.pickD + SIZE * this.k);
+    veil.mesh.quaternion.copy(this.cam.quaternion);
+    const veilTarget = s.picked >= 0 ? 1 : 0;
+    veil.opacity += (veilTarget - veil.opacity) * k;
+    if (Math.abs(veilTarget - veil.opacity) > 1e-3) moving = true;
+    else veil.opacity = veilTarget;
+    // the water keeps moving while it is shown (still, if motion is reduced)
+    if (veil.opacity > 0 && !reduce) {
+      veil.advance(dt);
+      moving = true;
+    }
     return moving;
   }
 
