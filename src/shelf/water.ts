@@ -1,7 +1,8 @@
 // The backdrop behind the sleeve in hand: the water-caustics shader the user brought (the same one
 // as on the Flutter create screen), drawn in screen space on a plane that faces the camera.
-// Colours follow the theme: the water is the page's paper, the highlights its ink at WATER.strength
-// (softer at night),
+// Colours: behind a sleeve with a cover, the cover's two colours as they are (shelf/scene.ts,
+// coverTint); otherwise the theme's — the water is the page's paper, the highlights its ink at
+// WATER.strength (softer at night),
 // with the clear middle pushed out (WATER.clearFrom/clearTo), as tuned in the Flutter version.
 import * as THREE from 'three';
 
@@ -11,7 +12,7 @@ export const WATER = {
    * stand out much more, so they are softer: at 0.15 even the brightest spot keeps ink-muted text
    * above 4.5:1.
    */
-  strength: { day: 0.4, night: 0.15 },
+  strength: { day: 0.4, night: 0.15, cover: 0.4 },
   /** The middle stays clear of highlights up to here (distance from the centre, 0..~2). */
   clearFrom: 0.2,
   clearTo: 0.7,
@@ -92,6 +93,8 @@ export function createWaterVeil() {
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(80, 60), material);
   mesh.frustumCulled = false;
   const u = material.uniforms;
+  // the colours it is easing toward: the theme's, or the cover's of the sleeve in hand
+  const target = { water: new THREE.Color('#efeeec'), highlight: new THREE.Color('#1f1e21'), strength: WATER.strength.day };
   return {
     mesh,
     get opacity() {
@@ -100,10 +103,26 @@ export function createWaterVeil() {
     set opacity(v: number) {
       u.uOpacity.value = v;
     },
-    setTheme(water: string, highlight: string, night: boolean) {
-      (u.uWater.value as THREE.Color).set(water);
-      (u.uHighlight.value as THREE.Color).set(highlight);
-      u.uStrength.value = night ? WATER.strength.night : WATER.strength.day;
+    /** Sets the colours to ease toward (see `ease`); `now` jumps there at once. */
+    aim(water: string, highlight: string, strength: number, now = false) {
+      target.water.set(water);
+      target.highlight.set(highlight);
+      target.strength = strength;
+      if (now) {
+        (u.uWater.value as THREE.Color).copy(target.water);
+        (u.uHighlight.value as THREE.Color).copy(target.highlight);
+        u.uStrength.value = strength;
+      }
+    },
+    /** One step toward the aimed colours; true while they are still changing. */
+    ease(k: number): boolean {
+      const w = u.uWater.value as THREE.Color, hl = u.uHighlight.value as THREE.Color;
+      w.lerp(target.water, k);
+      hl.lerp(target.highlight, k);
+      u.uStrength.value += (target.strength - (u.uStrength.value as number)) * k;
+      const d = Math.abs(w.r - target.water.r) + Math.abs(w.g - target.water.g) + Math.abs(w.b - target.water.b) +
+        Math.abs(hl.r - target.highlight.r) + Math.abs(hl.g - target.highlight.g) + Math.abs(hl.b - target.highlight.b);
+      return d > 1e-3;
     },
     setResolution(w: number, h: number) {
       (u.uResolution.value as THREE.Vector2).set(w, h);

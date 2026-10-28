@@ -203,6 +203,11 @@ h2 {
 .caption .name {
   margin-bottom: var(--space-1);
 }
+/* their own colour, so a data-theme set on them (the cover's water) takes effect */
+.caption,
+.actions {
+  color: var(--ink);
+}
 .actions {
   position: fixed;
   /* centred without transform: the develop animation owns transform */

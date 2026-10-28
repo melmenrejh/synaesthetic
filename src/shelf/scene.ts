@@ -8,7 +8,8 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import type { ShelfEntry } from '../data/model';
 import { loadShelfModel, type ShelfModel } from './model';
 import { loadRecordModel, type RecordModel } from './record';
-import { createWaterVeil } from './water';
+import { coverColours } from '../images/process';
+import { createWaterVeil, WATER } from './water';
 import { backCanvas, frontCanvas, KRAFT, rng, stickerCanvas, vinylCanvas, type SleeveImages } from './textures';
 
 /** Sleeve geometry is built at this size and scaled to the size of the places in the model. */
@@ -100,6 +101,8 @@ interface Item extends ShelfItem {
   lift: number;
   /** 0 on the shelf, 1 in hand: how much of HELD_LIGHT it gets. */
   glow: number;
+  /** The water's colours from its cover (undefined: not worked out yet, null: no cover). */
+  tint?: { water: string; highlight: string } | null;
   /** Has reached the hand since it was picked. */
   inHand: boolean;
   /** Drawn in the front pass, over the shelf: while in hand and on its way back. */
@@ -121,6 +124,17 @@ export interface ShelfCallbacks {
 }
 
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+const WHITE = new THREE.Color('#ffffff');
+/** The design system's ink in the day and night themes: the two text colours to choose from. */
+const INK_DARK = '#1f1e21';
+const INK_LIGHT = '#e9e8e6';
+
+/** WCAG relative luminance of a hex colour. */
+function luminance(hex: string) {
+  const c = new THREE.Color(hex); // linear already
+  return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+}
 
 /** `flipY: false` for textures on glTF models, whose UVs read images top down. */
 function tex(c: HTMLCanvasElement, flipY = true) {
@@ -338,9 +352,52 @@ export class Shelf {
 
   applyTheme() {
     // The wall's light is baked, so only what lies over it follows the theme.
-    const night = document.documentElement.dataset.theme === 'dark';
-    this.veil.setTheme(css('--paper') || '#efeeec', css('--ink') || '#1f1e21', night);
+    this.aimWater(this.waterOwner, true);
     this.invalidate();
+  }
+
+  // ---------- the water's colours ----------
+
+  /** Whose colours the water shows: the sleeve in hand (or falling), until the water has faded. */
+  private waterOwner: Item | null = null;
+
+  /**
+   * The cover's two colours, as they are: the colour that carries the cover for the water, its
+   * second colour for the highlights, or the first one lightened when the cover has no second.
+   * The cover is the one on the sleeve: the person's own picture, else the track's artwork.
+   */
+  private coverTint(it: Item): { water: string; highlight: string } | null {
+    if (it.tint === undefined) {
+      const c = it.entry.current && it.images.cover ? coverColours(it.images.cover as ImageBitmap) : null;
+      it.tint = c ? { water: c.main, highlight: c.second ?? `#${new THREE.Color(c.main).lerp(WHITE, 0.55).getHexString()}` } : null;
+    }
+    return it.tint;
+  }
+
+  /** Points the water at a sleeve's cover colours, or at the theme's when it has none. */
+  private aimWater(owner: Item | null, now = false) {
+    this.waterOwner = owner;
+    const tint = owner ? this.coverTint(owner) : null;
+    if (tint) this.veil.aim(tint.water, tint.highlight, WATER.strength.cover, now);
+    else {
+      const night = document.documentElement.dataset.theme === 'dark';
+      const strength = night ? WATER.strength.night : WATER.strength.day;
+      this.veil.aim(css('--paper') || '#efeeec', css('--ink') || '#1f1e21', strength, now);
+    }
+  }
+
+  /**
+   * Which text reads on the water behind the sleeve in hand: 'dark' for light text, 'light' for
+   * dark text, null when the water wears the theme's own colours. Of the two inks, the one with
+   * more contrast wins.
+   */
+  get backdropTone(): 'light' | 'dark' | null {
+    const tint = this.waterOwner ? this.coverTint(this.waterOwner) : null;
+    if (!tint) return null;
+    const l = luminance(tint.water);
+    const onDark = (luminance(INK_LIGHT) + 0.05) / (l + 0.05);
+    const onLight = (l + 0.05) / (luminance(INK_DARK) + 0.05);
+    return onDark >= onLight ? 'dark' : 'light';
   }
 
   pick(i: number) {
@@ -350,6 +407,8 @@ export class Shelf {
     this.openNow = 0;
     this.requestDetail(this.items[i], HIGH);
     this.setFront(this.items[i], true);
+    // water still hidden: it comes up already in the cover's colours; already shown: it flows to them
+    this.aimWater(this.items[i], this.veil.opacity < 0.01);
     this.cb.onPick(this.items[i].entry);
     this.invalidate();
   }
@@ -760,6 +819,10 @@ export class Shelf {
     veil.opacity += (veilTarget - veil.opacity) * k;
     if (Math.abs(veilTarget - veil.opacity) > 1e-3) moving = true;
     else veil.opacity = veilTarget;
+    // its colours flow to the cover of the sleeve in hand; they go back to the theme's only once
+    // the water has faded, so it never changes colour while it is leaving
+    if (veil.opacity === 0 && this.waterOwner && s.picked < 0 && !this.dropping) this.aimWater(null, true);
+    if (veil.ease(k)) moving = true;
     // the water keeps moving while it is shown (still, if motion is reduced)
     if (veil.opacity > 0 && !reduce) {
       veil.advance(dt);

@@ -104,14 +104,36 @@ export async function cutout(blob: Blob): Promise<Blob | null> {
 
 /** Three colours that carry the photo: frequent and saturated beat frequent and grey. */
 export async function paletteOf(blob: Blob): Promise<string[]> {
-  const bmp = await createImageBitmap(blob);
+  const colours = coloursOf(await createImageBitmap(blob), { keepExtremes: false });
+  return colours.length ? [...colours, ...FALLBACK_PALETTE].slice(0, 3) : FALLBACK_PALETTE;
+}
+
+/**
+ * The two colours of a cover, as they are: the one that carries it, and a second one only if the
+ * cover really has one (clearly different from the first). Black and white count: on a black and
+ * white cover they are its colours.
+ */
+export function coverColours(img: ImageBitmap): { main: string; second?: string } | null {
+  const [main, ...rest] = coloursOf(img, { keepExtremes: true, count: 6 });
+  if (!main) return null;
+  const second = rest.find((c) => distance(c, main) > 90);
+  return { main, second };
+}
+
+const rgbOf = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const distance = (a: string, b: string) => {
+  const [p, q] = [rgbOf(a), rgbOf(b)];
+  return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+};
+
+function coloursOf(bmp: ImageBitmap, o: { keepExtremes: boolean; count?: number }): string[] {
   const c = fit(bmp, 48);
   const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
   const buckets = new Map<number, { n: number; r: number; g: number; b: number }>();
   for (let i = 0; i < px.length; i += 4) {
     const r = px[i], g = px[i + 1], b = px[i + 2];
     if (px[i + 3] < 128) continue;
-    if (Math.min(r, g, b) > 226 || Math.max(r, g, b) < 24) continue;
+    if (!o.keepExtremes && (Math.min(r, g, b) > 226 || Math.max(r, g, b) < 24)) continue;
     const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5);
     const e = buckets.get(key) ?? { n: 0, r: 0, g: 0, b: 0 };
     e.n++;
@@ -127,9 +149,9 @@ export async function paletteOf(blob: Blob): Promise<string[]> {
       return { hex: hex(r, g, b), score: e.n * (0.4 + sat) };
     })
     .sort((a, b) => b.score - a.score)
-    .slice(0, 3)
+    .slice(0, o.count ?? 3)
     .map((c) => c.hex);
-  return colours.length ? [...colours, ...FALLBACK_PALETTE].slice(0, 3) : FALLBACK_PALETTE;
+  return colours;
 }
 
 const hex = (r: number, g: number, b: number) =>

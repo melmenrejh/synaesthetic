@@ -78,6 +78,7 @@ function showHeld(e: ShelfEntry) {
     ),
   );
   caption.hidden = false;
+  setTextTone(shelf?.backdropTone ?? null);
   syncActions();
 }
 
@@ -85,7 +86,17 @@ function hideHeld() {
   document.body.classList.remove('is-held');
   $('caption').hidden = true;
   $('actions').hidden = true;
+  setTextTone(null);
   void syncAudio();
+}
+
+// On water in a cover's colours, the caption and the words take the light or the dark ink,
+// whichever reads better there; on the theme's water they follow the theme.
+function setTextTone(tone: 'light' | 'dark' | null) {
+  for (const el of [$('caption'), $('actions')]) {
+    if (tone) el.dataset.theme = tone;
+    else delete el.dataset.theme;
+  }
 }
 
 // ---------- the record plays the song's own file ----------
