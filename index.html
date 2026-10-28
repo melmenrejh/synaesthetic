@@ -16,7 +16,8 @@
   <body>
     <main id="stage" aria-label="Полка"></main>
 
-    <header class="topbar">
+    <!-- the wall is dark in both themes (its light is baked), so what lies on it uses night colours -->
+    <header class="topbar" data-theme="dark">
       <div class="brand">
         <img src="/logo.png" alt="" width="34" height="30" />
         <span class="name">synaesthetic</span>
@@ -24,7 +25,7 @@
       <button id="add" class="s-btn" type="button" hidden>Добавить флакон</button>
     </header>
 
-    <section id="empty" class="empty" hidden>
+    <section id="empty" class="empty" data-theme="dark" hidden>
       <h1 id="empty-title" class="title"></h1>
       <p class="ui muted">У каждого флакона здесь будет своя песня и своя картинка.</p>
       <button id="empty-add" class="s-btn s-btn--primary" type="button">Добавить флакон</button>

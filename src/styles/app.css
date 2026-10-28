@@ -104,6 +104,10 @@ h2 {
 .topbar > * {
   pointer-events: auto;
 }
+.topbar,
+.empty {
+  color: var(--ink);
+}
 .brand {
   display: flex;
   align-items: center;

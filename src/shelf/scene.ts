@@ -1,16 +1,45 @@
-// The shelf of record sleeves (MVP doc §3). Built on the "Полка конвертов" sketch, with what the
-// product needs on top: any number of sleeves in rows, scrolling, frames drawn only while something
-// moves, and small textures on the shelf with a large one only for the sleeve in hand.
+// The shelf of record sleeves (MVP doc §3). The wall and the shelf come from Blender with baked light
+// (shelf/model.ts); sleeves stand where the file's empties stand, lit by the same studio HDRI the bake
+// used. When there are more sleeves than places, the whole wall-and-shelf module repeats along the
+// wall and the view pans. Frames are drawn only while something moves, textures are small on the
+// shelf and large only for the sleeve in hand.
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import type { ShelfEntry } from '../data/model';
+import { loadShelfModel, type ShelfModel } from './model';
 import { backCanvas, frontCanvas, KRAFT, rng, stickerCanvas, vinylCanvas, type SleeveImages } from './textures';
 
+/** Sleeve geometry is built at this size and scaled to the size of the places in the model. */
 const SIZE = 2;
-const PITCH = 2.5;
-const ROW_H = 3.3;
 const LOW = 512;
 const HIGH = 1024;
+
+/** How the camera looks at the shelf. Tuned by eye; change freely. */
+const VIEW = {
+  /** 0: straight at the sleeve fronts, 1: straight at the wall. */
+  towardWall: 0.35,
+  /** Degrees above the shelf. */
+  pitch: 8,
+  fov: 32,
+  /** Share of the screen the shelf and its sleeves take. */
+  fill: 0.72,
+};
+
+/**
+ * Light for the sleeve in hand: it turns its face to the viewer, where the studio is dark, so it
+ * is brought "to the light": a soft light from the viewer's side fades in, and the studio's
+ * reflected light on the sleeve grows. Both fade back when it returns to the shelf.
+ */
+const HELD_LIGHT = {
+  /** Intensity of the light from the viewer's side. */
+  fill: 1.8,
+  /** Studio light on the sleeve in hand, as a multiple of the shelf's. */
+  env: 1.8,
+};
+
+/** The studio the bake was lit with; the sleeves get the same light. */
+const ENV_URL = '/env/wooden_studio_08_1k.hdr';
+const MODEL_URL = '/models/shelf.glb';
 
 export interface ShelfItem {
   entry: ShelfEntry;
@@ -24,14 +53,26 @@ interface Item extends ShelfItem {
   sticker: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshPhysicalMaterial> | null;
   vinyl: THREE.Mesh | null;
   vinylMat: THREE.MeshPhysicalMaterial | null;
-  home: { pos: THREE.Vector3; quat: THREE.Quaternion };
+  home: { pos: THREE.Vector3; quat: THREE.Quaternion; normal: THREE.Vector3 };
+  /** Every lit material of the sleeve, for the held-light boost. */
+  mats: THREE.MeshStandardMaterial[];
   hover: number;
-  detail: number;
+  /** 0 on the shelf, 1 in hand: how much of HELD_LIGHT it gets. */
+  glow: number;
+  /** Has reached the hand since it was picked. */
+  inHand: boolean;
+  /** Texture size it should have, and the parts still drawn at the other size. */
+  want: number;
+  pending: Part[];
 }
+
+type Part = 'front' | 'back' | 'sticker' | 'vinyl';
 
 export interface ShelfCallbacks {
   onPick(entry: ShelfEntry): void;
   onPutBack(): void;
+  /** The model could not be loaded. */
+  onError?(e: unknown): void;
 }
 
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -47,23 +88,24 @@ export class Shelf {
   readonly canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private cam = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+  private cam = new THREE.PerspectiveCamera(VIEW.fov, 1, 0.05, 100);
   private items: Item[] = [];
-  private ledges = new THREE.Group();
-  private wallMat = new THREE.MeshStandardMaterial({ roughness: 0.95 });
-  private ledgeMat = new THREE.MeshStandardMaterial({ roughness: 0.7 });
-  private dimMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+  private model: ShelfModel | null = null;
+  private modules = new THREE.Group();
+  private dimMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
   private dim = new THREE.Mesh(new THREE.PlaneGeometry(80, 60), this.dimMat);
-  private sun = new THREE.DirectionalLight(0xffffff, 1.6);
-  private ambient = new THREE.AmbientLight(0xffffff, 0.25);
+  private sun = new THREE.DirectionalLight(0xffffff, 1.2);
+  private fill = new THREE.DirectionalLight(0xffffff, 0);
   private s = { picked: -1, flipped: false, open: false, rotX: 0, rotY: 0, hover: -1, dragging: false };
-  private cols = 4;
-  private camY = 0;
-  private camYMin = 0;
-  private camYMax = 0;
-  private camZ = 12;
-  private pickD = 6;
-  private visibleH = 1;
+  /** Sleeve scale: the model's place size over SIZE. */
+  private k = 0.4;
+  private target = new THREE.Vector3();
+  private dir = new THREE.Vector3(0, 0, 1);
+  private dist = 5;
+  private pan = 0;
+  private panMax = 0;
+  private pickD = 2;
+  private visibleW = 1;
   private raf = 0;
   private last = 0;
   private reduce = matchMedia('(prefers-reduced-motion: reduce)');
@@ -72,9 +114,8 @@ export class Shelf {
     private host: HTMLElement,
     private cb: ShelfCallbacks,
   ) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    // Neutral keeps covers close to their real colours; ACES washed them out on the light wall.
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
@@ -82,28 +123,40 @@ export class Shelf {
     this.canvas = this.renderer.domElement;
     host.prepend(this.canvas);
 
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmrem.dispose();
-
+    // Soft key light from the studio ceiling: it only casts the sleeves' shadows on the baked surfaces.
     const sun = this.sun;
-    sun.position.set(3.5, 5, 8);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, { left: -7, right: 7, top: 6, bottom: -6, near: 1, far: 25 });
-    sun.shadow.radius = 6;
-    sun.shadow.bias = -0.0004;
-    this.scene.add(sun, sun.target, this.ambient);
-
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(80, 200), this.wallMat);
-    wall.position.set(0, -60, -0.12);
-    wall.receiveShadow = true;
-    this.scene.add(wall, this.ledges, this.dim);
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.radius = 8;
+    sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.01;
+    this.scene.add(sun, sun.target, this.fill, this.fill.target, this.modules, this.dim);
+    this.dim.renderOrder = 1;
 
     this.applyTheme();
     this.bindInput();
     new ResizeObserver(() => this.resize()).observe(host);
     this.reduce.addEventListener('change', () => this.invalidate());
+    void this.load();  }
+
+  private async load() {
+    try {
+      const [model, env] = await Promise.all([loadShelfModel(MODEL_URL), new RGBELoader().loadAsync(ENV_URL)]);
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      env.mapping = THREE.EquirectangularReflectionMapping;
+      this.scene.environment = pmrem.fromEquirectangular(env).texture;
+      env.dispose();
+      pmrem.dispose();
+      this.model = model;
+      this.k = model.slots[0].size / SIZE;
+      this.scene.background = model.wallColor;
+      this.layout();
+      this.snapHome();
+      this.warmUp();
+    } catch (e) {
+      console.error(e);
+      this.cb.onError?.(e);
+    }
   }
 
   get pickedEntry(): ShelfEntry | null {
@@ -121,9 +174,24 @@ export class Shelf {
     for (const it of this.items) this.disposeItem(it);
     this.items = list.map((d, i) => this.buildItem(d, i));
     this.s.picked = keep ? this.items.findIndex((it) => it.entry.bottle.id === keep) : -1;
-    if (this.s.picked >= 0) this.setDetail(this.items[this.s.picked], HIGH);
+    if (this.s.picked >= 0) this.requestDetail(this.items[this.s.picked], HIGH);
     this.layout();
-    // fresh meshes start where they live, not in the middle of the scene
+    this.snapHome();
+    if (this.model) this.warmUp();
+  }
+
+  /**
+   * Compiles every shader now, while nothing moves. A material drawn for the first time compiles
+   * on the spot, and that stalls the frame for 100+ ms: at the moment of a click it looks like
+   * the light blinking.
+   */
+  private warmUp() {
+    this.step(0);
+    void this.renderer.compileAsync(this.scene, this.cam).then(() => this.invalidate());
+  }
+
+  /** Fresh meshes start where they live, not in the middle of the scene. */
+  private snapHome() {
     for (const it of this.items) {
       it.group.position.copy(it.home.pos);
       it.group.quaternion.copy(it.home.quat);
@@ -132,28 +200,23 @@ export class Shelf {
   }
 
   applyTheme() {
-    const night = document.documentElement.dataset.theme === 'dark';
-    this.wallMat.color.set(css('--paper') || '#efeeec');
-    this.ledgeMat.color.set(css('--paper-raised') || '#f8f8f7');
+    // The wall's light is baked, so only what lies over it follows the theme.
     this.dimMat.color.set(css('--paper') || '#efeeec');
-    this.sun.intensity = night ? 0.8 : 1.3;
-    this.ambient.intensity = night ? 0.06 : 0.15;
-    this.renderer.toneMappingExposure = night ? 0.85 : 0.9;
     this.invalidate();
   }
 
   pick(i: number) {
     if (i < 0 || i >= this.items.length) return;
-    if (this.s.picked >= 0 && this.s.picked !== i) this.setDetail(this.items[this.s.picked], LOW);
+    if (this.s.picked >= 0 && this.s.picked !== i) this.requestDetail(this.items[this.s.picked], LOW);
     Object.assign(this.s, { picked: i, flipped: false, open: false, rotX: 0, rotY: 0, hover: -1 });
-    this.setDetail(this.items[i], HIGH);
+    this.requestDetail(this.items[i], HIGH);
     this.cb.onPick(this.items[i].entry);
     this.invalidate();
   }
 
   putBack() {
     if (this.s.picked < 0) return;
-    this.setDetail(this.items[this.s.picked], LOW);
+    this.requestDetail(this.items[this.s.picked], LOW);
     Object.assign(this.s, { picked: -1, open: false, flipped: false, rotX: 0, rotY: 0 });
     this.cb.onPutBack();
     this.invalidate();
@@ -218,8 +281,13 @@ export class Shelf {
       g.add(vinyl);
     }
 
+    g.scale.setScalar(this.k);
     g.userData.item = i;
     this.scene.add(g);
+    const mats: THREE.MeshStandardMaterial[] = [];
+    g.traverse((o) => {
+      if (o instanceof THREE.Mesh) for (const m of [o.material].flat()) if (!mats.includes(m)) mats.push(m);
+    });
     return {
       ...d,
       group: g,
@@ -228,26 +296,46 @@ export class Shelf {
       sticker,
       vinyl,
       vinylMat,
-      home: { pos: new THREE.Vector3(), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.09, 0, 0)) },
+      home: { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), normal: new THREE.Vector3(0, 0, 1) },
+      mats,
       hover: 0,
-      detail: LOW,
+      glow: 0,
+      inHand: false,
+      want: LOW,
+      pending: [],
     };
   }
 
-  /** Redraws the sleeve's textures at another size; the old ones leave video memory. */
-  private setDetail(it: Item, size: number) {
-    if (it.detail === size) return;
-    it.detail = size;
-    const swap = (m: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial, c: HTMLCanvasElement) => {
-      m.map?.dispose();
-      m.map = tex(c);
-      m.needsUpdate = true;
-    };
-    swap(it.front, frontCanvas(it.entry, it.images, size));
-    swap(it.back, backCanvas(it.entry, size));
-    const st = it.sticker && stickerCanvas(it.entry, it.images, size);
-    if (it.sticker && st) swap(it.sticker.material, st.canvas);
-    if (it.vinylMat) swap(it.vinylMat, vinylCanvas(it.entry, size));
+  /**
+   * Asks for the sleeve's textures at another size. They are not swapped here: drawing and
+   * uploading four large textures at once holds the GPU for ~100 ms, which shows as a blink at the
+   * moment of a click. `step` swaps them one part per frame, once the sleeve has settled.
+   */
+  private requestDetail(it: Item, size: number) {
+    if (it.want === size) return;
+    it.want = size;
+    it.pending = ['front', 'sticker', 'vinyl', 'back'];
+    this.invalidate();
+  }
+
+  /** Redraws one part of the sleeve at the wanted size; the old texture leaves video memory. */
+  private swapPart(it: Item) {
+    const part = it.pending.shift();
+    if (!part) return;
+    const size = it.want;
+    let mat: THREE.MeshStandardMaterial | null = null;
+    let canvas: HTMLCanvasElement | null = null;
+    if (part === 'front') (mat = it.front), (canvas = frontCanvas(it.entry, it.images, size));
+    else if (part === 'back') (mat = it.back), (canvas = backCanvas(it.entry, size));
+    else if (part === 'vinyl' && it.vinylMat) (mat = it.vinylMat), (canvas = vinylCanvas(it.entry, size));
+    else if (part === 'sticker' && it.sticker) (mat = it.sticker.material), (canvas = stickerCanvas(it.entry, it.images, size)?.canvas ?? null);
+    if (!mat || !canvas) return;
+    const t = tex(canvas);
+    // upload before it is shown, so the swap itself costs nothing to draw
+    this.renderer.initTexture(t);
+    const old = mat.map;
+    mat.map = t;
+    old?.dispose();
   }
 
   private disposeItem(it: Item) {
@@ -274,56 +362,63 @@ export class Shelf {
   }
 
   private layout() {
-    const w = this.host.clientWidth;
-    this.cols = w < 560 ? 2 : w < 960 ? 3 : 4;
-    const rows = Math.max(1, Math.ceil(this.items.length / this.cols));
-    const t = 2 * Math.tan(THREE.MathUtils.degToRad(this.cam.fov / 2));
-    const shelfW = this.cols * PITCH + 0.4;
-    this.camZ = Math.max(shelfW / t / this.cam.aspect, (ROW_H * 1.25) / t);
-    this.visibleH = this.camZ * t;
-    // the sleeve in hand fills ~70% of the short side, with room for the record pulled out
-    this.pickD = Math.max((SIZE + 1.3) / 0.86 / t / this.cam.aspect, SIZE / 0.62 / t);
+    const m = this.model;
+    if (!m) return;
+    const per = m.slots.length;
+    const count = Math.max(1, Math.ceil(this.items.length / per));
 
-    const rowY = (r: number) => -r * ROW_H;
+    // one wall-and-shelf module per `per` sleeves, side by side along the wall
+    while (this.modules.children.length < count) {
+      const clone = this.modules.children.length ? m.root.clone() : m.root;
+      clone.position.copy(m.along).multiplyScalar(m.width * this.modules.children.length);
+      this.modules.add(clone);
+    }
+    while (this.modules.children.length > count) this.modules.remove(this.modules.children[this.modules.children.length - 1]);
+
     this.items.forEach((it, i) => {
-      const row = Math.floor(i / this.cols), col = i % this.cols;
-      // a row that is not full stands in the middle of its ledge
-      const inRow = Math.min(this.cols, this.items.length - row * this.cols);
-      it.home.pos.set((col - (inRow - 1) / 2) * PITCH, rowY(row) + SIZE / 2 - 0.02, 0.16);
+      const slot = m.slots[i % per];
+      const offset = m.along.clone().multiplyScalar(m.width * Math.floor(i / per));
+      it.home.pos.copy(slot.pos).add(offset);
+      it.home.quat.copy(slot.quat);
+      it.home.normal.copy(slot.normal);
+      it.group.scale.setScalar(this.k);
     });
 
-    for (const l of [...this.ledges.children]) {
-      this.ledges.remove(l);
-      (l as THREE.Mesh).geometry.dispose();
-    }
-    for (let r = 0; r < rows; r++) {
-      const ledge = new THREE.Mesh(new THREE.BoxGeometry(shelfW, 0.12, 0.55), this.ledgeMat);
-      ledge.position.set(0, rowY(r) - 0.06, 0.12);
-      ledge.castShadow = ledge.receiveShadow = true;
-      const lip = new THREE.Mesh(new THREE.BoxGeometry(shelfW, 0.22, 0.05), this.ledgeMat);
-      lip.position.set(0, rowY(r) + 0.02, 0.4);
-      lip.castShadow = true;
-      this.ledges.add(ledge, lip);
-    }
+    // camera: between the sleeves' faces and the wall, a little from above
+    const normal = m.slots[0].normal;
+    const flat = normal.clone().lerp(m.wallNormal, VIEW.towardWall).normalize();
+    const pitch = THREE.MathUtils.degToRad(VIEW.pitch);
+    this.dir.copy(flat).multiplyScalar(Math.cos(pitch)).setY(Math.sin(pitch)).normalize();
+    const slotTop = Math.max(...m.slots.map((s) => s.pos.y + s.size / 2));
+    const box = m.shelfBox;
+    this.target.set(0, 0, 0);
+    for (const s of m.slots) this.target.add(s.pos);
+    this.target.divideScalar(per);
+    this.target.y = (box.min.y + slotTop) / 2;
+    const size = box.getSize(new THREE.Vector3());
+    const contentW = Math.max(size.x, size.z);
+    const contentH = slotTop - box.min.y;
+    const t = 2 * Math.tan(THREE.MathUtils.degToRad(this.cam.fov / 2));
+    this.dist = Math.max(contentW / VIEW.fill / (t * this.cam.aspect), contentH / VIEW.fill / t);
+    this.visibleW = this.dist * t * this.cam.aspect;
+    this.panMax = (count - 1) * m.width;
+    this.pan = THREE.MathUtils.clamp(this.pan, 0, this.panMax);
 
-    const top = rowY(0) + SIZE + 0.5, bottom = rowY(rows - 1) - 0.6;
-    const pad = 0.1 * this.visibleH;
-    if (top - bottom + pad < this.visibleH) this.camYMin = this.camYMax = (top + bottom) / 2 - pad / 2;
-    else {
-      this.camYMax = top - this.visibleH / 2 + pad;
-      this.camYMin = bottom + this.visibleH / 2;
-    }
-    if (!this.started) this.camY = this.camYMax;
-    this.camY = THREE.MathUtils.clamp(this.camY, this.camYMin, this.camYMax);
-    this.started = this.items.length > 0;
+    // the sleeve in hand fills ~70% of the short side, with room for the record pulled out
+    const S = SIZE * this.k;
+    this.pickD = Math.max((S + 1.3 * this.k) / 0.86 / t / this.cam.aspect, S / 0.62 / t);
+
+    // shadows only around the sleeves of the module in view
+    const sc = this.sun.shadow.camera;
+    Object.assign(sc, { left: -contentW, right: contentW, top: contentW, bottom: -contentW, near: 0.1, far: 12 });
+    sc.updateProjectionMatrix();
     this.invalidate();
   }
-  private started = false;
 
-  private scrollBy(world: number) {
-    const y = THREE.MathUtils.clamp(this.camY + world, this.camYMin, this.camYMax);
-    if (y !== this.camY) {
-      this.camY = y;
+  private panBy(world: number) {
+    const p = THREE.MathUtils.clamp(this.pan + world, 0, this.panMax);
+    if (p !== this.pan) {
+      this.pan = p;
       this.invalidate();
     }
   }
@@ -346,6 +441,8 @@ export class Shelf {
   private tp = new THREE.Vector3();
   private tq = new THREE.Quaternion();
   private eu = new THREE.Euler();
+  private camRight = new THREE.Vector3();
+  private camFwd = new THREE.Vector3();
 
   /** Moves everything one step toward where it should be; true while anything is still moving. */
   private step(dt: number): boolean {
@@ -354,30 +451,61 @@ export class Shelf {
     const kv = 1 - Math.exp(-dt * (reduce ? 30 : 5));
     let moving = false;
     const s = this.s;
+    const m = this.model;
 
-    this.cam.position.set(0, this.camY, this.camZ);
-    this.cam.lookAt(0, this.camY, 0);
-    this.sun.target.position.set(0, this.camY - 0.3, 0);
-    this.sun.position.set(3.5, this.camY + 5, 8);
+    const look = this.target.clone();
+    if (m) look.addScaledVector(m.along, this.pan);
+    this.cam.position.copy(look).addScaledVector(this.dir, this.dist);
+    this.cam.lookAt(look);
+    this.cam.updateMatrixWorld();
+    this.cam.getWorldDirection(this.camFwd);
+    this.camRight.setFromMatrixColumn(this.cam.matrixWorld, 0);
+    this.sun.target.position.copy(look);
+    if (m) this.sun.position.copy(look).addScaledVector(m.wallNormal, 2).add(new THREE.Vector3(0, 4, 0)).addScaledVector(m.along, -1);
 
+    let heldArrived = false;
+    let swapped = false;
     this.items.forEach((it, i) => {
       const held = s.picked === i;
       if (held) {
-        this.tp.set(s.open && it.vinyl ? -0.6 : 0, this.camY, this.camZ - this.pickD);
+        this.tp.copy(this.cam.position).addScaledVector(this.camFwd, this.pickD);
+        if (s.open && it.vinyl) this.tp.addScaledVector(this.camRight, -0.6 * this.k);
         this.eu.set(s.rotX, s.rotY + (s.flipped ? Math.PI : 0), 0);
-        this.tq.setFromEuler(this.eu);
+        this.tq.copy(this.cam.quaternion).multiply(new THREE.Quaternion().setFromEuler(this.eu));
       } else {
         const target = s.hover === i && s.picked < 0 ? 1 : 0;
         it.hover += (target - it.hover) * k;
         if (Math.abs(target - it.hover) > 1e-3) moving = true;
-        this.tp.copy(it.home.pos);
-        this.tp.z += it.hover * 0.35;
-        this.tp.y += it.hover * 0.08;
+        // a hovered sleeve rises a little out of the row, toward the viewer
+        this.tp.copy(it.home.pos).addScaledVector(it.home.normal, it.hover * 0.35 * this.k);
+        this.tp.y += it.hover * 0.12 * this.k;
         this.tq.copy(it.home.quat);
       }
-      if (it.group.position.distanceToSquared(this.tp) > 1e-7 || it.group.quaternion.angleTo(this.tq) > 1e-4) moving = true;
+      if (it.group.position.distanceToSquared(this.tp) > 1e-8 || it.group.quaternion.angleTo(this.tq) > 1e-4) moving = true;
       it.group.position.lerp(this.tp, k);
       it.group.quaternion.slerp(this.tq, k);
+      // the light comes up only once the sleeve has reached the hand (and stays while it is turned
+      // or the record slides out), and leaves as soon as it goes back
+      if (!held) it.inHand = false;
+      else if (it.group.position.distanceTo(this.tp) < 0.05 * SIZE * this.k) it.inHand = true;
+      if (held) heldArrived = it.inHand;
+      const glow = it.inHand ? 1 : 0;
+      if (Math.abs(glow - it.glow) > 1e-3) {
+        it.glow += (glow - it.glow) * k;
+        for (const mat of it.mats) mat.envMapIntensity = 1 + (HELD_LIGHT.env - 1) * it.glow;
+        moving = true;
+      }
+      // textures change size only when the sleeve is still: large once in hand, small once home;
+      // one part per frame across the whole shelf
+      if (it.pending.length) {
+        const settled =
+          it.want === HIGH ? it.inHand : !held && it.group.position.distanceTo(it.home.pos) < 0.02 * SIZE * this.k;
+        if (settled && !swapped) {
+          this.swapPart(it);
+          swapped = true;
+        }
+        moving = true;
+      }
       if (it.vinyl) {
         const out = held && s.open ? 1.15 : 0;
         it.vinyl.position.x += (out - it.vinyl.position.x) * kv;
@@ -390,11 +518,25 @@ export class Shelf {
       }
     });
 
-    this.dim.position.set(0, this.camY, this.camZ - this.pickD - 1.2);
+    // the light from the viewer's side, a little above the eyes, aimed at the sleeve in hand
+    // (it stays in the scene at zero instead of being hidden: adding or removing a light recompiles
+    // every material, and the whole scene blinks)
+    const heldItem = s.picked >= 0 ? this.items[s.picked] : null;
+    const fillTarget = heldArrived ? HELD_LIGHT.fill : 0;
+    this.fill.intensity += (fillTarget - this.fill.intensity) * k;
+    if (Math.abs(fillTarget - this.fill.intensity) > 1e-3) moving = true;
+    else this.fill.intensity = fillTarget;
+    this.fill.position.copy(this.cam.position).add(new THREE.Vector3(0, SIZE * this.k, 0));
+    this.fill.target.position.copy(heldItem ? heldItem.group.position : look);
+
+    // the veil hangs just behind the sleeve in hand, facing the camera
+    this.dim.position.copy(this.cam.position).addScaledVector(this.camFwd, this.pickD + SIZE * this.k);
+    this.dim.quaternion.copy(this.cam.quaternion);
+    // (always in the scene, never hidden: its shader is compiled up front, see warmUp)
     const dimTarget = s.picked >= 0 ? 0.7 : 0;
     this.dimMat.opacity += (dimTarget - this.dimMat.opacity) * k;
-    this.dim.visible = this.dimMat.opacity > 0.002;
     if (Math.abs(dimTarget - this.dimMat.opacity) > 1e-3) moving = true;
+    else this.dimMat.opacity = dimTarget;
     return moving;
   }
 
@@ -434,7 +576,8 @@ export class Shelf {
         this.s.rotX = THREE.MathUtils.clamp(this.s.rotX + (e.clientY - last.y) * 0.009, -1.1, 1.1);
         this.invalidate();
       } else if (down && this.s.picked < 0) {
-        this.scrollBy(((e.clientY - last.y) * this.visibleH) / cv.clientHeight);
+        // dragging the wall slides along it, to the next shelves
+        this.panBy((-(e.clientX - last.x) * this.visibleW) / cv.clientWidth);
       } else if (!down && this.s.picked < 0 && e.pointerType === 'mouse') {
         const h = this.hitAt(e);
         if (h !== this.s.hover) {
@@ -469,7 +612,8 @@ export class Shelf {
       (e) => {
         if (this.s.picked >= 0) return;
         e.preventDefault();
-        this.scrollBy((-e.deltaY * this.visibleH) / cv.clientHeight);
+        const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        this.panBy((d * this.visibleW) / cv.clientWidth);
       },
       { passive: false },
     );
