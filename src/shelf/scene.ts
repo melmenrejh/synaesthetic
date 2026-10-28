@@ -125,7 +125,6 @@ export class Shelf {
   private fill = new THREE.DirectionalLight(0xffffff, 0);
   private s = {
     picked: -1,
-    flipped: false,
     open: false,
     rotX: 0,
     rotY: 0,
@@ -209,9 +208,6 @@ export class Shelf {
   get pickedEntry(): ShelfEntry | null {
     return this.s.picked >= 0 ? this.items[this.s.picked].entry : null;
   }
-  get flipped() {
-    return this.s.flipped;
-  }
   get recordOut() {
     return this.s.open;
   }
@@ -262,7 +258,7 @@ export class Shelf {
   pick(i: number) {
     if (i < 0 || i >= this.items.length) return;
     if (this.s.picked >= 0 && this.s.picked !== i) this.requestDetail(this.items[this.s.picked], LOW);
-    Object.assign(this.s, { picked: i, flipped: false, open: false, rotX: 0, rotY: 0, hover: -1, pull: null });
+    Object.assign(this.s, { picked: i, open: false, rotX: 0, rotY: 0, hover: -1, pull: null });
     this.openNow = 0;
     this.requestDetail(this.items[i], HIGH);
     this.setFront(this.items[i], true);
@@ -273,24 +269,18 @@ export class Shelf {
   putBack() {
     if (this.s.picked < 0) return;
     this.requestDetail(this.items[this.s.picked], LOW);
-    Object.assign(this.s, { picked: -1, open: false, flipped: false, rotX: 0, rotY: 0, pull: null });
+    Object.assign(this.s, { picked: -1, open: false, rotX: 0, rotY: 0, pull: null });
     this.canvas.style.cursor = 'default';
     this.cb.onPutBack();
     this.invalidate();
   }
 
-  flip() {
-    this.s.flipped = !this.s.flipped;
-    if (this.s.flipped) this.s.open = false;
-    this.s.rotX = this.s.rotY = 0;
-    this.invalidate();
-  }
-
+  /** The record in or out without the gesture: the keyboard's way (Space). */
   toggleRecord() {
     const it = this.items[this.s.picked];
     if (!it?.vinyl) return;
     this.s.open = !this.s.open;
-    if (this.s.open) Object.assign(this.s, { flipped: false, rotX: 0, rotY: 0 });
+    if (this.s.open) Object.assign(this.s, { rotX: 0, rotY: 0 });
     this.invalidate();
   }
 
@@ -557,7 +547,7 @@ export class Shelf {
       if (held) {
         this.tp.copy(this.cam.position).addScaledVector(this.camFwd, this.pickD);
         if (it.vinyl) this.tp.addScaledVector(this.camRight, -0.6 * this.k * this.openNow);
-        this.eu.set(s.rotX, s.rotY + (s.flipped ? Math.PI : 0), 0);
+        this.eu.set(s.rotX, s.rotY, 0);
         this.tq.copy(this.cam.quaternion).multiply(this.q1.setFromEuler(this.eu));
         const f = this.floatAmt;
         if (f > 0) {
@@ -674,11 +664,13 @@ export class Shelf {
   /**
    * Whether a press on the sleeve in hand starts the pull gesture: on its right part (PULL.edge),
    * or on the record itself, which lies further right still. Pull left to bring the record out,
-   * right to put it back; the left part turns the sleeve either way. Only face up, with a record.
+   * right to put it back; the left part turns the sleeve either way. Only with a record, and only
+   * while the front faces the viewer (turned round, the "right half" would be the wrong side).
    */
   private startsPull(local: THREE.Vector3): boolean {
     const it = this.items[this.s.picked];
-    if (!it?.vinyl || this.s.flipped) return false;
+    const faceUp = Math.cos(this.s.rotX) * Math.cos(this.s.rotY) > 0;
+    if (!it?.vinyl || !faceUp) return false;
     return local.x > PULL.edge * (SIZE / 2);
   }
 

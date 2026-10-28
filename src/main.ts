@@ -144,15 +144,12 @@ function syncActions() {
     h('button', { type: 'button', class: `s-btn ${cls}`.trim(), onclick: () => (run(), syncActions()) }, text);
   const bar = $('actions');
   const out = shelf.recordOut;
+  // Turning, the record and going back to the shelf are gestures (drag the sleeve, pull its right
+  // half, tap beside it or Esc); only what has no gesture stays a word here.
   bar.replaceChildren(
     ...present(
-      word(shelf.flipped ? 'Лицевой стороной' : 'Перевернуть', () => shelf!.flip()),
-      e.current
-        ? word(out ? 'Убрать пластинку' : 'Достать пластинку', () => shelf!.toggleRecord(), out ? 'is-current' : '')
-        : word('Добавить песню', () => changeSong(e)),
       out && e.current?.track.sourceUrl ? listenLink(e) : null,
-      e.current ? word('Сменить песню', () => changeSong(e)) : null,
-      word('На полку', () => shelf!.putBack()),
+      word(e.current ? 'Сменить песню' : 'Добавить песню', () => changeSong(e)),
     ),
   );
   bar.hidden = false;
@@ -177,8 +174,17 @@ function addBottle() {
 
 $('add').addEventListener('click', addBottle);
 $('empty-add').addEventListener('click', addBottle);
+// The keyboard's way to the gestures: Esc puts the sleeve back, Space brings the record out or in
+// (unless Space is pressing a focused button or typing in a field).
 addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !document.querySelector('.overlay')) shelf?.putBack();
+  if (document.querySelector('.overlay')) return;
+  if (e.key === 'Escape') shelf?.putBack();
+  const onControl = e.target instanceof HTMLElement && e.target.closest('button, a, input, textarea');
+  if (e.key === ' ' && shelf?.pickedEntry?.current && !onControl) {
+    e.preventDefault();
+    shelf.toggleRecord();
+    syncActions();
+  }
 });
 
 $('empty-title').replaceChildren(...revealWords('Полка ждёт первый флакон'));
