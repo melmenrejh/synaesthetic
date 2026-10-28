@@ -715,6 +715,50 @@ export class Shelf {
     this.invalidate();
   }
 
+  // ---------- room for the player ----------
+
+  /** Height of the player shown under the sleeve in hand (CSS px); 0: no player. */
+  private dockPx = 0;
+  /** Distance of the sleeve in hand from the camera this frame. */
+  private heldDist = 2;
+  /** Whether the record turns while it is out: it stops when the music is paused. */
+  private spinning = true;
+
+  setDock(px: number) {
+    if (px === this.dockPx) return;
+    this.dockPx = px;
+    this.invalidate();
+  }
+
+  setSpinning(on: boolean) {
+    this.spinning = on;
+    this.invalidate();
+  }
+
+  /**
+   * Where the sleeve in hand and the player under it stand when the record is out: together in the
+   * middle of the screen, the sleeve made smaller if both would not fit. `dist`: the sleeve's
+   * distance, `offsetPx`: how far its centre sits from the screen's (− is up), `dockTop`: the
+   * player's top edge (CSS px from the top).
+   */
+  private heldLayout() {
+    const H = this.host.clientHeight;
+    const margin = 40, gap = 24;
+    let s = this.sleevePx;
+    if (this.dockPx > 0) {
+      const avail = H - 2 * margin - gap - this.dockPx;
+      if (s > avail) s = Math.max(avail, H * 0.3);
+    }
+    const total = s + (this.dockPx > 0 ? gap + this.dockPx : 0);
+    const top = Math.max(margin, (H - total) / 2);
+    return { dist: (this.pickD * this.sleevePx) / s, offsetPx: top + s / 2 - H / 2, dockTop: top + s + gap };
+  }
+
+  /** Where the player's top edge goes, in CSS px from the top of the screen. */
+  get dockTop() {
+    return this.heldLayout().dockTop;
+  }
+
   /** How far along the wall the view stands for a shelf and a lean (a share of the view's width). */
   private panFor(page: number, peek: number) {
     const m = this.model;
@@ -846,7 +890,13 @@ export class Shelf {
       if (this.dropping?.it === it) return;
       const held = s.picked === i;
       if (held) {
-        this.tp.copy(this.cam.position).addScaledVector(this.camFwd, this.pickD);
+        // with the player shown under it, the sleeve steps back and up to make room (heldLayout)
+        const L = this.heldLayout();
+        const room = this.dockPx > 0 ? this.openNow : 0;
+        const d = this.pickD + (L.dist - this.pickD) * room;
+        this.heldDist = d;
+        this.tp.copy(this.cam.position).addScaledVector(this.camFwd, d);
+        this.tp.addScaledVector(this.camUp, (-L.offsetPx * d * this.viewT * room) / this.host.clientHeight);
         if (it.vinyl) this.tp.addScaledVector(this.camRight, -0.6 * this.k * this.openNow);
         this.eu.set(s.rotX, s.rotY, 0);
         this.tq.copy(this.cam.quaternion).multiply(this.q1.setFromEuler(this.eu));
@@ -905,7 +955,7 @@ export class Shelf {
         it.vinyl.position.x += (out - it.vinyl.position.x) * (held ? 1 : kv);
         if (Math.abs(out - it.vinyl.position.x) > 1e-3) moving = true;
         // the record turns while it is out: that is "playing"
-        if (it.vinyl.position.x > 0.25 && !reduce) {
+        if (it.vinyl.position.x > 0.25 && !reduce && this.spinning) {
           it.vinyl.rotation.z -= dt * 3.5;
           moving = true;
         }
@@ -947,7 +997,7 @@ export class Shelf {
     }
 
     const veil = this.veil;
-    veil.mesh.position.copy(this.cam.position).addScaledVector(this.camFwd, this.pickD + SIZE * this.k);
+    veil.mesh.position.copy(this.cam.position).addScaledVector(this.camFwd, Math.max(this.pickD, this.heldDist) + SIZE * this.k);
     veil.mesh.quaternion.copy(this.cam.quaternion);
     // the water stays while a deleted sleeve is still falling
     const veilTarget = s.picked >= 0 || this.dropping ? 1 : 0;

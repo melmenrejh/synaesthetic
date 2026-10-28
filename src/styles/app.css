@@ -244,6 +244,26 @@ h2 {
   }
 }
 
+/* ---------- player under the sleeve in hand ---------- */
+/* centred on the screen (without transform: the develop animation owns it); its top is set from
+   the scene, under the sleeve, which steps back to make room */
+.player-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: min(320px, calc(100vw - 2 * var(--space-4)));
+  display: grid;
+  justify-items: center;
+  color: var(--ink);
+  animation: s-develop var(--duration-soft) var(--ease-develop) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .player-dock {
+    animation: fade var(--duration-quick) linear both;
+  }
+}
+
 /* ---------- text develops word by word ---------- */
 .reveal-word {
   display: inline-block;

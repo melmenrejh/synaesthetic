@@ -8,6 +8,7 @@ import { bitmapOf } from './images/process';
 import { Shelf, type ShelfItem } from './shelf/scene';
 import { openAddFlow } from './ui/addFlow';
 import { confirmDialog } from './ui/confirm';
+import { createPlayer } from './ui/player';
 import { h, icon, revealWords } from './ui/dom';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -136,7 +137,7 @@ function showPeekHint(dir: -1 | 0 | 1) {
 // On water in a cover's colours, the caption and the words take the light or the dark ink,
 // whichever reads better there; on the theme's water they follow the theme.
 function setTextTone(tone: 'light' | 'dark' | null) {
-  for (const el of [$('caption'), $('actions')]) {
+  for (const el of [$('caption'), $('actions'), dock]) {
     if (tone) el.dataset.theme = tone;
     else delete el.dataset.theme;
   }
@@ -149,6 +150,83 @@ const audio = new Audio();
 audio.loop = true;
 let audioFor = '';
 let fade = 0;
+/** The person paused it with the player; stays paused until they press play again. */
+let userPaused = false;
+
+// The volume, 0–100, remembered between visits (design system: Player).
+const VOLUME_KEY = 'synaesthetic.volume';
+let volume = (() => {
+  try {
+    const v = Number(localStorage.getItem(VOLUME_KEY));
+    return localStorage.getItem(VOLUME_KEY) !== null && v >= 0 && v <= 100 ? v : 80;
+  } catch {
+    return 80;
+  }
+})();
+
+// ---------- the player under the sleeve ----------
+// Shown while the record of a song with its own file is out (a song by link opens where it lives).
+const player = createPlayer({
+  toggle: () => void togglePlay(),
+  seek: (t) => {
+    if (Number.isFinite(t)) audio.currentTime = t;
+    paintPlayer();
+  },
+  volume: (v) => {
+    volume = v;
+    try {
+      localStorage.setItem(VOLUME_KEY, String(v));
+    } catch {
+      // private window: the level just is not remembered
+    }
+    clearInterval(fade);
+    audio.volume = v / 100;
+  },
+});
+player.setVolume(volume);
+const dock = h('div', { class: 'player-dock', hidden: true }, player.root);
+document.body.append(dock);
+
+function paintPlayer() {
+  player.update({ playing: !audio.paused && !userPaused, current: audio.currentTime, duration: audio.duration });
+}
+for (const ev of ['timeupdate', 'play', 'pause', 'durationchange', 'loadedmetadata', 'seeked']) audio.addEventListener(ev, paintPlayer);
+// the arc moves smoothly while it plays (timeupdate alone comes ~4 times a second)
+(function tick() {
+  if (!dock.hidden && !audio.paused) paintPlayer();
+  requestAnimationFrame(tick);
+})();
+
+/** Shows the player under the sleeve and has the sleeve make room for it, or hides it. */
+function showPlayer(on: boolean) {
+  if (on === !dock.hidden) return placePlayer();
+  dock.hidden = !on;
+  shelf?.setDock(on ? dock.getBoundingClientRect().height : 0);
+  placePlayer();
+}
+function placePlayer() {
+  if (!dock.hidden && shelf) dock.style.top = `${shelf.dockTop}px`;
+}
+// the sleeve's size depends on the window: the scene re-lays out first, then the player follows
+new ResizeObserver(() => requestAnimationFrame(placePlayer)).observe($('stage'));
+
+async function togglePlay() {
+  if (audio.paused || userPaused) {
+    userPaused = false;
+    shelf?.setSpinning(true);
+    try {
+      await audio.play();
+      fadeTo(volume / 100);
+    } catch {
+      // the browser refused to start sound
+    }
+  } else {
+    userPaused = true;
+    shelf?.setSpinning(false);
+    fadeTo(0, () => audio.pause());
+  }
+  paintPlayer();
+}
 
 // A timer, not requestAnimationFrame: frames stop in a background tab, and the sound must not.
 function fadeTo(target: number, done?: () => void) {
@@ -165,7 +243,11 @@ function fadeTo(target: number, done?: () => void) {
 
 async function syncAudio() {
   const file = shelf?.pickedEntry?.current?.track.localFile;
+  showPlayer(!!(shelf?.recordOut && file));
   if (!shelf?.recordOut || !file) {
+    // the record went back: the next time it comes out, it plays again
+    userPaused = false;
+    shelf?.setSpinning(true);
     if (!audio.paused) fadeTo(0, () => audio.pause());
     return;
   }
@@ -177,9 +259,10 @@ async function syncAudio() {
     audioFor = file;
     audio.volume = 0;
   }
+  if (userPaused) return;
   try {
     await audio.play();
-    fadeTo(1);
+    fadeTo(volume / 100);
   } catch {
     // the browser refused to start sound; the record still turns
   }
@@ -262,8 +345,12 @@ addEventListener('keydown', (e) => {
   }
   if (e.key === ' ' && shelf?.pickedEntry?.current && !onControl) {
     e.preventDefault();
-    shelf.toggleRecord();
-    syncActions();
+    // with the player shown, Space is play / pause (design system: Player); otherwise the record
+    if (!dock.hidden) void togglePlay();
+    else {
+      shelf.toggleRecord();
+      syncActions();
+    }
   }
 });
 
