@@ -57,6 +57,9 @@ const FLOAT = { yaw: 4, pitch: 2.5, roll: 1.2, bob: 0.015, ease: 1.2 };
  */
 const PULL = { edge: 0, travel: 0.6, snap: 0.33 };
 
+/** A deleted sleeve falls out of the hand: seconds to leave the screen, and how much it tumbles (rad/s). */
+const DROP = { seconds: 0.7, tumble: 0.9 };
+
 /** How far a hovered sleeve rises, as a share of its height. */
 const HOVER_LIFT = 0.5;
 
@@ -137,6 +140,8 @@ export class Shelf {
   private openNow = 0;
   /** Width of the sleeve in hand on screen, in CSS pixels: the scale of the pull gesture. */
   private sleevePx = 300;
+  /** 2·tan(fov/2): the view's height per unit of distance from the camera. */
+  private viewT = 0.57;
   /** Sleeve scale: the model's place size over SIZE. */
   private k = 0.4;
   private target = new THREE.Vector3();
@@ -214,6 +219,14 @@ export class Shelf {
 
   setItems(list: ShelfItem[]) {
     const keep = this.pickedEntry?.bottle.id;
+    // where each sleeve stands now: rebuilt sleeves continue from there, so a sleeve whose place
+    // changed (one was added or removed) travels to its new place instead of jumping
+    const was = new Map(
+      this.items.map((it) => [
+        it.entry.bottle.id,
+        { pos: it.group.position.clone(), quat: it.group.quaternion.clone(), inHand: it.inHand, glow: it.glow },
+      ]),
+    );
     for (const it of this.items) this.disposeItem(it);
     this.items = list.map((d, i) => this.buildItem(d, i));
     this.s.picked = keep ? this.items.findIndex((it) => it.entry.bottle.id === keep) : -1;
@@ -223,8 +236,38 @@ export class Shelf {
     }
     this.layout();
     this.snapHome();
+    for (const it of this.items) {
+      const w = was.get(it.entry.bottle.id);
+      if (!w) continue;
+      it.group.position.copy(w.pos);
+      it.group.quaternion.copy(w.quat);
+      Object.assign(it, { inHand: w.inHand, glow: w.glow });
+    }
     if (this.model) this.warmUp();
   }
+
+  /**
+   * The sleeve in hand falls out of the hand and below the screen; resolves once it is gone, so
+   * the caller can delete it and rebuild the shelf. With reduced motion it is gone at once.
+   */
+  discardPicked(): Promise<void> {
+    const i = this.s.picked;
+    if (i < 0) return Promise.resolve();
+    const it = this.items[i];
+    Object.assign(this.s, { picked: -1, open: false, rotX: 0, rotY: 0, pull: null, dragging: false });
+    this.canvas.style.cursor = 'default';
+    this.cb.onPutBack();
+    if (this.reduce.matches) {
+      it.group.visible = false;
+      this.invalidate();
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.dropping = { it, v: 0, fallen: 0, resolve };
+      this.invalidate();
+    });
+  }
+  private dropping: { it: Item; v: number; fallen: number; resolve: () => void } | null = null;
 
   /**
    * Compiles every shader now, while nothing moves. A material drawn for the first time compiles
@@ -256,7 +299,7 @@ export class Shelf {
   }
 
   pick(i: number) {
-    if (i < 0 || i >= this.items.length) return;
+    if (i < 0 || i >= this.items.length || this.dropping?.it === this.items[i]) return;
     if (this.s.picked >= 0 && this.s.picked !== i) this.requestDetail(this.items[this.s.picked], LOW);
     Object.assign(this.s, { picked: i, open: false, rotX: 0, rotY: 0, hover: -1, pull: null });
     this.openNow = 0;
@@ -456,6 +499,7 @@ export class Shelf {
     const S = SIZE * this.k;
     this.pickD = Math.max((S + 1.3 * this.k) / 0.86 / t / this.cam.aspect, S / 0.62 / t);
     this.sleevePx = (S / (this.pickD * t)) * this.host.clientHeight;
+    this.viewT = t;
     this.invalidate();
   }
 
@@ -543,6 +587,8 @@ export class Shelf {
     let heldArrived = false;
     let swapped = false;
     this.items.forEach((it, i) => {
+      // a sleeve falling away moves on its own, below
+      if (this.dropping?.it === it) return;
       const held = s.picked === i;
       if (held) {
         this.tp.copy(this.cam.position).addScaledVector(this.camFwd, this.pickD);
@@ -624,6 +670,26 @@ export class Shelf {
 
     // the water hangs just behind the sleeve in hand, facing the camera
     // (always in the scene, never hidden: its shader is compiled up front, see warmUp)
+    // the deleted sleeve falls: from rest, faster and faster, tumbling a little, until it has left
+    // the screen (DROP.seconds to fall the height of the view)
+    const d = this.dropping;
+    if (d) {
+      const fall = this.pickD * this.viewT + SIZE * this.k;
+      const g = (2 * fall) / DROP.seconds ** 2;
+      d.v += g * dt;
+      const dy = d.v * dt;
+      d.fallen += dy;
+      d.it.group.position.addScaledVector(this.camUp, -dy);
+      d.it.group.rotateX(dt * DROP.tumble);
+      d.it.group.rotateZ(-dt * DROP.tumble * 0.6);
+      moving = true;
+      if (d.fallen > fall) {
+        d.it.group.visible = false;
+        this.dropping = null;
+        d.resolve();
+      }
+    }
+
     const veil = this.veil;
     veil.mesh.position.copy(this.cam.position).addScaledVector(this.camFwd, this.pickD + SIZE * this.k);
     veil.mesh.quaternion.copy(this.cam.quaternion);

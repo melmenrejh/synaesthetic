@@ -60,6 +60,36 @@ export async function addBottle(bottle: Omit<Bottle, 'id' | 'addedAt'>): Promise
 }
 
 /**
+ * Removes a bottle for good: its pairings, its pictures, and the tracks no other bottle uses
+ * (with their artwork and audio files). One transaction, so a failure leaves nothing half-deleted.
+ */
+export async function deleteBottle(id: string): Promise<void> {
+  const d = await db;
+  const tx = d.transaction(['bottles', 'pairings', 'tracks', 'blobs'], 'readwrite');
+  const bottles = tx.objectStore('bottles');
+  const pairings = tx.objectStore('pairings');
+  const tracks = tx.objectStore('tracks');
+  const blobs = tx.objectStore('blobs');
+
+  const bottle = await bottles.get(id);
+  const all = await pairings.getAll();
+  const own = all.filter((p) => p.bottleId === id);
+  const stillUsed = new Set(all.filter((p) => p.bottleId !== id).map((p) => p.trackId));
+  const orphanBlobs: (string | undefined)[] = [bottle?.photo, bottle?.cutout, ...own.map((p) => p.coverImage)];
+
+  for (const p of own) await pairings.delete(p.id);
+  for (const trackId of new Set(own.map((p) => p.trackId))) {
+    if (stillUsed.has(trackId)) continue;
+    const t = await tracks.get(trackId);
+    if (t) orphanBlobs.push(t.artwork, t.localFile);
+    await tracks.delete(trackId);
+  }
+  for (const b of orphanBlobs) if (b) await blobs.delete(b);
+  await bottles.delete(id);
+  await tx.done;
+}
+
+/**
  * Gives the bottle a new song from `from` (ISO date, the day it is put on). The current pairing,
  * if any, ends on that date, so the history stays gapless; a song can be replaced but never removed.
  */

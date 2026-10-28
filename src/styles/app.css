@@ -255,6 +255,13 @@ h2 {
 .flow .s-form {
   max-width: none;
 }
+.confirm {
+  width: min(400px, 100%);
+}
+.confirm__title {
+  margin: 0;
+  color: var(--ink);
+}
 .s-form__actions.is-confirm {
   flex-wrap: wrap;
 }

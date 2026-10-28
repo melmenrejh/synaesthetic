@@ -1,12 +1,13 @@
 import './styles/tokens.css';
 import './styles/components.css';
 import './styles/app.css';
-import { getBlob, loadShelf } from './data/db';
+import { deleteBottle, getBlob, loadShelf } from './data/db';
 import type { ShelfEntry } from './data/model';
 import { tearAll } from './ds/tear';
 import { bitmapOf } from './images/process';
 import { Shelf, type ShelfItem } from './shelf/scene';
 import { openAddFlow } from './ui/addFlow';
+import { confirmDialog } from './ui/confirm';
 import { h, icon, revealWords } from './ui/dom';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -150,6 +151,8 @@ function syncActions() {
     ...present(
       out && e.current?.track.sourceUrl ? listenLink(e) : null,
       word(e.current ? 'Сменить песню' : 'Добавить песню', () => changeSong(e)),
+      // irreversible: last, and asks first
+      word('Удалить', () => void removeBottle(e)),
     ),
   );
   bar.hidden = false;
@@ -161,6 +164,18 @@ function listenLink(e: ShelfEntry) {
   const a = h('a', { class: 's-btn', href: e.current!.track.sourceUrl, target: '_blank', rel: 'noopener' }, 'Слушать');
   a.append(icon('external'));
   return a;
+}
+
+async function removeBottle(e: ShelfEntry) {
+  const ok = await confirmDialog({
+    title: `Удалить «${e.bottle.name}»?`,
+    text: 'Флакон и вся история его песен исчезнут с полки насовсем.',
+    confirm: 'Удалить',
+  });
+  if (!ok || shelf?.pickedEntry?.bottle.id !== e.bottle.id) return;
+  await shelf.discardPicked();
+  await deleteBottle(e.bottle.id);
+  await refresh();
 }
 
 function changeSong(e: ShelfEntry) {
