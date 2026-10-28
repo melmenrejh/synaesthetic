@@ -25,7 +25,11 @@ npm run dev
 - `src/images` — уменьшение фото, вырезка белого фона для стикера, палитра.
 - `src/audio` — чтение тегов загруженного трека (ID3 в MP3: название, исполнитель, обложка; иначе имя файла).
 - `src/styles/tokens.css`, `components.css` — копии из дизайн-системы. При изменении системы их нужно обновить.
-- `server/api.ts` — разбор ссылок (og-теги, oEmbed Spotify/YouTube/SoundCloud, прокси картинок). В разработке работает внутри Vite, в продакшене это Cloudflare Worker (`worker/`, `wrangler.toml`).
+- `server/api.ts` — разбор ссылок (og-теги, oEmbed Spotify/YouTube/SoundCloud, прокси картинок). В разработке работает внутри Vite, на опубликованном сайте — как Netlify Function (`netlify/functions/api.ts`, `netlify.toml`). Вариант для Cloudflare тоже есть (`worker/`, `wrangler.toml`).
+
+## Публикация
+
+Сайт: https://synaesthetic.netlify.app/ — Netlify собирает его из ветки `main` на GitHub после каждого `git push` (настройки сборки в `netlify.toml`).
 
 ## Чужие материалы
 
