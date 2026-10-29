@@ -311,6 +311,15 @@ h2 {
 }
 
 /* ---------- add / change song window ---------- */
+/* an empty hint takes no room, so the gaps between fields stay even; a message moves the form
+   down by its line */
+.s-field__hint:empty {
+  display: none;
+}
+/* fields side by side keep their inputs level when only one of them has a message */
+.s-form__row {
+  align-items: start;
+}
 .overlay {
   position: fixed;
   inset: 0;
