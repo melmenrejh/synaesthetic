@@ -30,6 +30,12 @@ await Promise.race([
   new Promise((r) => setTimeout(r, 2500)),
 ]);
 
+// the tip over a hovered sleeve (see showSleeveTip): ready before the shelf can be hovered
+const sleeveTip = h('span', { class: 's-tip', role: 'tooltip' });
+const sleeveTipAnchor = h('div', { class: 's-tip-anchor shelf-tip', 'aria-hidden': 'true' }, sleeveTip);
+document.body.append(sleeveTipAnchor);
+let tipTimer = 0;
+
 // ---------- the shelf ----------
 try {
   shelf = new Shelf($('stage'), {
@@ -37,6 +43,7 @@ try {
     onPutBack: hideHeld,
     onChange: syncActions,
     onPeek: showPeekHint,
+    onHover: showSleeveTip,
     onWall: applyWallTone,
   });
 } catch {
@@ -132,6 +139,27 @@ function showPeekHint(dir: -1 | 0 | 1) {
   );
   Object.assign(peekHint.style, { left: `${at.x}px`, top: `${at.y}px`, transform: 'translate(-50%, -100%)' });
   document.body.append(peekHint);
+}
+
+// ---------- tip over the hovered sleeve ----------
+// Which perfume it is (design system: Tip): above the sleeve as it stands once risen, after
+// --tip-delay; moved straight to a neighbour, it shows at once — the tips are already being read.
+// One tip on the screen, leaving at once when the mouse does.
+
+function showSleeveTip(e: ShelfEntry | null) {
+  clearTimeout(tipTimer);
+  const shown = sleeveTip.classList.contains('is-visible');
+  sleeveTip.classList.remove('is-visible');
+  const at = e && shelf?.hoverAnchor();
+  if (!e || !at) return;
+  sleeveTip.textContent = e.bottle.brand ? `${e.bottle.name}, ${e.bottle.brand}` : e.bottle.name;
+  sleeveTipAnchor.dataset.theme = shelf?.wallTone ?? 'dark';
+  // near the top edge the tip goes under the sleeve's top instead
+  sleeveTip.classList.toggle('s-tip--below', at.y < 64);
+  Object.assign(sleeveTipAnchor.style, { left: `${at.x}px`, top: `${at.y}px` });
+  const show = () => sleeveTip.classList.add('is-visible');
+  if (shown) show();
+  else tipTimer = window.setTimeout(show, 400);
 }
 
 // On water in a cover's colours, the caption and the words take the light or the dark ink,

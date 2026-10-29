@@ -179,6 +179,21 @@ h2 {
   text-shadow: none;
 }
 
+/* ---------- tip over the hovered sleeve ---------- */
+/* a point at the middle of the sleeve's top edge; the tip stands above it (design system: Tip),
+   coloured for the wall like the paging hint. The delay is kept in code: the hover is on the canvas */
+.shelf-tip {
+  position: fixed;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  color: var(--ink);
+}
+/* 20px more air than the system's 8px: the sleeve flies up toward it */
+.shelf-tip .s-tip {
+  margin-bottom: calc(var(--space-2) + 20px);
+}
+
 /* ---------- empty shelf ---------- */
 .empty {
   position: fixed;
@@ -441,7 +456,20 @@ input[type='month'].s-input {
     border-radius: var(--radius-24) var(--radius-24) 0 0;
     border-bottom: 0;
   }
+  /* the host's badge (64px high) holds the bottom right corner: the buttons go one under another,
+     the main one on top, and the last one stays above the badge */
   .flow .s-window__body {
-    padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
+    padding-bottom: max(calc(64px + var(--space-4)), env(safe-area-inset-bottom));
+  }
+  .flow .s-form__actions,
+  .flow .s-form__actions > .row {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .flow .s-form__actions > .row {
+    gap: var(--space-3);
+  }
+  .flow .s-form__actions .s-btn {
+    justify-content: center;
   }
 }

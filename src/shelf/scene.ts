@@ -147,6 +147,8 @@ export interface ShelfCallbacks {
   onChange?(): void;
   /** The view leans toward the next (1) or previous (−1) shelf, waiting for a second gesture; 0: no longer. */
   onPeek?(dir: -1 | 0 | 1): void;
+  /** The mouse came onto a sleeve on the shelf (its entry), or off it (null). */
+  onHover?(entry: ShelfEntry | null): void;
   /** The wall has loaded: what lies on it can take its tone (`wallTone`). */
   onWall?(): void;
   /** The model could not be loaded. */
@@ -319,6 +321,7 @@ export class Shelf {
         { pos: it.group.position.clone(), quat: it.group.quaternion.clone(), inHand: it.inHand, glow: it.glow },
       ]),
     );
+    this.setHover(-1);
     for (const it of this.items) this.disposeItem(it);
     this.items = list.map((d, i) => this.buildItem(d, i));
     this.s.picked = keep ? this.items.findIndex((it) => it.entry.bottle.id === keep) : -1;
@@ -459,7 +462,8 @@ export class Shelf {
   pick(i: number) {
     if (i < 0 || i >= this.items.length || this.dropping?.it === this.items[i]) return;
     if (this.s.picked >= 0 && this.s.picked !== i) this.requestDetail(this.items[this.s.picked], LOW);
-    Object.assign(this.s, { picked: i, open: false, rotX: 0, rotY: 0, hover: -1, pull: null });
+    this.setHover(-1);
+    Object.assign(this.s, { picked: i, open: false, rotX: 0, rotY: 0, pull: null });
     this.openNow = 0;
     this.requestDetail(this.items[i], HIGH);
     this.setFront(this.items[i], true);
@@ -692,6 +696,7 @@ export class Shelf {
     if (this.s.picked >= 0) return;
     const to = this.page + dir;
     if (to < 0 || to >= this.pages) return;
+    this.setHover(-1);
     if (this.peek === dir) {
       this.goTo(to);
       return;
@@ -785,6 +790,27 @@ export class Shelf {
     cam.updateMatrixWorld();
     const p = shelf.project(cam);
     return { x: ((p.x + 1) / 2) * this.host.clientWidth, y: ((1 - p.y) / 2) * this.host.clientHeight };
+  }
+
+  /**
+   * Where the tip over the hovered sleeve goes: the middle of its top edge as it stands once
+   * risen, in CSS pixels; null when no sleeve is hovered.
+   */
+  hoverAnchor(): { x: number; y: number } | null {
+    const it = this.items[this.s.hover];
+    if (!it || this.s.picked >= 0) return null;
+    const top = new THREE.Vector3(0, (SIZE * this.k) / 2, 0).applyQuaternion(it.home.quat).add(it.home.pos);
+    top.y += it.lift * SIZE * this.k;
+    const p = top.project(this.cam);
+    return { x: ((p.x + 1) / 2) * this.host.clientWidth, y: ((1 - p.y) / 2) * this.host.clientHeight };
+  }
+
+  private setHover(i: number) {
+    if (i === this.s.hover) return;
+    this.s.hover = i;
+    this.canvas.style.cursor = i >= 0 ? 'pointer' : 'default';
+    this.cb.onHover?.(i >= 0 ? this.items[i].entry : null);
+    this.invalidate();
   }
 
   // ---------- frames on demand ----------
@@ -1084,12 +1110,7 @@ export class Shelf {
         this.s.rotX = THREE.MathUtils.clamp(this.s.rotX + (e.clientY - last.y) * 0.009, -1.1, 1.1);
         this.invalidate();
       } else if (!down && this.s.picked < 0 && e.pointerType === 'mouse') {
-        const h = this.hitAt(e);
-        if (h !== this.s.hover) {
-          this.s.hover = h;
-          cv.style.cursor = h >= 0 ? 'pointer' : 'default';
-          this.invalidate();
-        }
+        this.setHover(this.hitAt(e));
       } else if (!down && this.s.picked >= 0 && e.pointerType === 'mouse') {
         // in hand: the edge that pulls shows a sideways cursor, the rest of the sleeve a grab
         const h = this.hit(e);
@@ -1130,10 +1151,7 @@ export class Shelf {
       this.invalidate();
     });
     cv.addEventListener('pointerleave', () => {
-      if (this.s.picked < 0 && this.s.hover >= 0) {
-        this.s.hover = -1;
-        this.invalidate();
-      }
+      if (this.s.picked < 0) this.setHover(-1);
     });
     // A scroll is one gesture however many wheel events it sends (a trackpad sends dozens, with
     // inertia): it counts once its movement adds up, and the next one only after a pause.

@@ -1,13 +1,14 @@
 // A small confirmation window for irreversible actions, in the same window as the add form
 // (design system: Form/Window). No red: the words say what will happen. Esc, a click beside the
-// window or «Отмена» say no.
+// window or «Остаться» say no. The safe answer is the main (black) button; the irreversible one
+// is the plain one beside it.
 import { tearAll } from '../ds/tear';
 import { h, icon } from './dom';
 
-export function confirmDialog(o: { title: string; text: string; confirm: string }): Promise<boolean> {
+export function confirmDialog(o: { title: string; text: string; confirm: string; stay?: string }): Promise<boolean> {
   return new Promise((resolve) => {
-    const cancel = h('button', { type: 'button', class: 's-btn' }, 'Отмена');
-    const ok = h('button', { type: 'button', class: 's-btn s-btn--primary' }, o.confirm);
+    const cancel = h('button', { type: 'button', class: 's-btn s-btn--primary' }, o.stay ?? 'Остаться');
+    const ok = h('button', { type: 'button', class: 's-btn' }, o.confirm);
     const close = h('button', { type: 'button', class: 's-btn s-btn--icon', 'aria-label': 'Закрыть' });
     close.append(icon('close'));
     const titleId = `c-${Math.random().toString(36).slice(2, 8)}`;
@@ -23,7 +24,7 @@ export function confirmDialog(o: { title: string; text: string; confirm: string 
           { class: 's-form' },
           h('h2', { id: titleId, class: 'ui confirm__title' }, o.title),
           h('p', { class: 'ui muted' }, o.text),
-          h('div', { class: 's-form__actions' }, cancel, ok),
+          h('div', { class: 's-form__actions' }, ok, cancel),
         ),
       ),
     );

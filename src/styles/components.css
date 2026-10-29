@@ -482,3 +482,27 @@
 /* leaving: back into blur */
 .s-toast.is-leaving { animation: s-develop var(--duration-soft) var(--ease-develop) reverse both; }
 @media (prefers-reduced-motion: reduce) { .s-toast, .s-toast.is-leaving { animation: none; } .s-toast__timer { animation: none; display: none; } }
+
+/* ---------- Tip (synced from the design system) ---------- */
+.s-tip-anchor { position: relative; display: inline-grid; justify-items: center; }
+.s-tip {
+  position: absolute; z-index: 80; left: 50%; bottom: 100%;
+  margin-bottom: var(--space-2);
+  width: max-content; max-width: min(280px, calc(100vw - 2 * var(--space-4)));
+  text-align: center; text-wrap: balance;
+  font: 400 14px/20px var(--font-mono, "IBM Plex Serif", Georgia, serif); letter-spacing: -0.01em;
+  color: var(--ink);
+  pointer-events: none;
+  opacity: 0; filter: blur(var(--blur-reveal)); transform: translate(-50%, 4px);
+  transition: opacity var(--duration-soft) var(--ease-develop), filter var(--duration-soft) var(--ease-develop), transform var(--duration-soft) var(--ease-develop);
+  transition-delay: 0s;
+}
+.s-tip--below { bottom: auto; top: 100%; margin-bottom: 0; margin-top: var(--space-2); transform: translate(-50%, -4px); }
+/* show on hover or keyboard focus, after --tip-delay; hide at once */
+.s-tip-anchor:hover > .s-tip, .s-tip-anchor:focus-within > .s-tip, .s-tip.is-visible {
+  opacity: 1; filter: blur(0); transform: translate(-50%, 0);
+  transition-delay: var(--tip-delay, 400ms);
+}
+.s-tip.is-visible { transition-delay: 0s; }
+@media (prefers-reduced-motion: reduce) { .s-tip { filter: none; transform: translate(-50%, 0); transition: opacity var(--duration-quick) linear; } }
+@media (hover: none) { .s-tip-anchor:hover > .s-tip { opacity: 0; } }
